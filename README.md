@@ -38,12 +38,12 @@ The `link:` install points the profile at the checkout directory, so later `pnpm
 
 ### First install: ssh2's build script
 
-pnpm ≥ 11 blocks dependency build scripts by default, and a GitHub install brings `ssh2` into the profile's workspace fresh, so the first `dsh plugin add` can fail with `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…`. The safe fix is to run `pnpm approve-builds` in the profile directory (`~/.dsh/profiles/<profile>`) and decline both builds, or to write the same decision by hand into the existing `allowBuilds` map of the profile's `pnpm-workspace.yaml` (`~/.dsh/profiles/<profile>/pnpm-workspace.yaml`) and re-run the add command:
+pnpm ≥ 11 blocks dependency build scripts by default, and a GitHub install brings `ssh2` into the profile's workspace fresh, so the first `dsh plugin add` can fail with `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…`. The safe fix is to run `pnpm approve-builds` in the profile directory (`~/.dsh/profiles/<profile>`) and decline both builds, which records the decision in the profile's `pnpm-workspace.yaml`; equivalently, write it by hand there and re-run the add command:
 
 ```yaml
-allowBuilds:
-  cpu-features: false
-  ssh2: false
+onlyBuiltDependencies:
+  - ssh2
+  - cpu-features
 ```
 
 Declining both is the safe choice: `ssh2`'s install script only probes an optional native crypto binding, and `ssh2` runs fully on its pure-JS fallback without it; `cpu-features` is that optional binding (a `node-gyp` native build), and `ssh2` already guards its one runtime `require` in a `try/catch`. Neither needs a toolchain or network at install time, and approving them only matters if you want the acceleration and have a full C++ build environment. No other build scripts are involved.

@@ -38,12 +38,12 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 ### 首次安装：ssh2 的构建脚本
 
-pnpm ≥ 11 默认拦截依赖的构建脚本，而 GitHub 安装会在 profile 的 workspace 中全新安装 `ssh2`，因此首次 `dsh plugin add` 可能报 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…` 并失败。安全的做法是在 profile 目录（`~/.dsh/profiles/<profile>`）里执行 `pnpm approve-builds` 并**两个都拒绝**；也可以把同样的决定直接写进 profile 的 `pnpm-workspace.yaml`（`~/.dsh/profiles/<profile>/pnpm-workspace.yaml`）已有的 `allowBuilds` 映射，然后重新执行安装命令：
+pnpm ≥ 11 默认拦截依赖的构建脚本，而 GitHub 安装会在 profile 的 workspace 中全新安装 `ssh2`，因此首次 `dsh plugin add` 可能报 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…` 并失败。安全的做法是在 profile 目录（`~/.dsh/profiles/<profile>`）里执行 `pnpm approve-builds` 并**两个都拒绝**，pnpm 会把决定写进 profile 的 `pnpm-workspace.yaml`；等价地，也可以在那里手写后重新执行安装命令：
 
 ```yaml
-allowBuilds:
-  cpu-features: false
-  ssh2: false
+onlyBuiltDependencies:
+  - ssh2
+  - cpu-features
 ```
 
 两个都拒绝是安全选择：ssh2 的 install 脚本只探测一个可选的原生加密绑定，没有它 ssh2 以纯 JS 回退路径完整运行；cpu-features 正是那个可选绑定（`node-gyp` 原生构建），ssh2 对它的唯一运行时 `require` 已包在 `try/catch` 里。两者都不需要工具链或网络即可完成安装；只有当你想要该加速且具备完整 C++ 构建环境时，才需要批准它们。除此之外没有其他构建脚本。
