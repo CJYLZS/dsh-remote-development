@@ -13,13 +13,14 @@
 - [配置](#配置)
 - [已知限制与延期工作](#已知限制与延期工作)
 - [开发说明](#开发说明)
+  - [第三方代码](#第三方代码)
 
 -----
 
 <a id="使用本插件"></a>
 ## 使用本插件
 
-直接从 GitHub 安装即可——`lib/` 构建产物已入库，无需构建：
+直接从 GitHub 安装即可——`lib/` 构建产物已入库，无需构建，也无需任何 profile 配置：
 
 ```sh
 dsh plugin add --profile web github:CJYLZS/dsh-remote-development
@@ -36,17 +37,13 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 `link:` 安装把 profile 指向检出目录，之后每次 `pnpm run build` 重启 harness 即生效，无需重新 add。
 
-### 首次安装：ssh2 的构建脚本
+### 为什么安装不需要批准构建脚本
 
-pnpm ≥ 11 默认拦截依赖的构建脚本，而 GitHub 安装会在 profile 的 workspace 中全新安装 `ssh2`，因此首次 `dsh plugin add` 可能报 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…` 并失败。安全的做法是在 profile 目录（`~/.dsh/profiles/<profile>`）里执行 `pnpm approve-builds` 并**两个都拒绝**，pnpm 会把决定写进 profile 的 `pnpm-workspace.yaml`；等价地，也可以在那里手写后重新执行安装命令：
+`ssh2` 带一个探测可选原生加密绑定的 install 脚本，而 pnpm ≥ 10 默认拦截依赖的构建脚本——若它是普通依赖，首次 `dsh plugin add` 就会以 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…` 失败。pnpm 只从 workspace 根读取构建许可，因此本包对自身的任何声明都无法授予它，而 profile 并不是本包的 workspace。
 
-```yaml
-onlyBuiltDependencies:
-  - ssh2
-  - cpu-features
-```
+所以 `ssh2` 不作为安装依赖存在：它在构建时被打进 `lib/index.js`，连同其纯 JS 依赖（`asn1`、`safer-buffer`、`tweetnacl`、`bcrypt-pbkdf`）。插件唯一的运行时依赖是 `@deepseek-ai/schemastery`，它没有构建脚本。整个过程不需要 C++ 工具链，profile 的 `pnpm-workspace.yaml` 也不会被改动。
 
-两个都拒绝是安全选择：ssh2 的 install 脚本只探测一个可选的原生加密绑定，没有它 ssh2 以纯 JS 回退路径完整运行；cpu-features 正是那个可选绑定（`node-gyp` 原生构建），ssh2 对它的唯一运行时 `require` 已包在 `try/catch` 里。两者都不需要工具链或网络即可完成安装；只有当你想要该加速且具备完整 C++ 构建环境时，才需要批准它们。除此之外没有其他构建脚本。
+两个可选原生加速件（`cpu-features` 与 `ssh2` 自带的绑定）在构建时被替换为桩，因此所有平台都走 `ssh2` 的纯 JS 加解密路径——这与未批准构建时本就会走的路径相同。`ssh2` 把两处 `require` 都包在 `try/catch` 里，这正是它自己的回退设计。维护代价见[第三方代码](#第三方代码)。
 
 安装后重启 harness。Web GUI 中会出现：
 
@@ -102,6 +99,7 @@ onlyBuiltDependencies:
 - **不支持持久终端会话。** 终端工具会返回明确的"not supported by dsh-remote-development"错误，而不是让 agent 自行尝试；远程命令请使用 bash 工具。
 - **远程会话不支持 `@` 文件引用。** 远程会话中输入 `@` 会给出单条明确的"暂不支持"候选，而不是静默失败；引用源接口已预留到后续阶段。
 - **没有镜像或同步层。** 锚点目录只保存元数据，不保存文件副本；每次读写都经 SSH，受 `maxFileBytes` 限制。
+- **SSH 走纯 JS 而非原生加密。** 打包的 `ssh2` 不会加载可选原生加速件，大文件 SFTP 传输的吞吐低于原生构建版本。这与之前未批准构建时的实际情况一致——那种情况下 pnpm 本就拦掉了该构建。
 - **搜索依赖远程 ripgrep。** 远程机器上必须存在 `rg` 二进制（可用 `remoteRipgrep` 配置）；否则搜索工具在远程路径上失败。
 - **不发布 npm。** 从 GitHub 安装（`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`）或从本地检出路径安装；GitHub 安装使用已入库的 `lib/` 构建，本地路径则以链接方式指向目录，重新构建后重启即生效。
 - **内建目录选择流是被覆盖而非替换。** 两个目录流注册以不同优先级共存（本插件使用 -1，最低者优先渲染）；卸载本插件后槽位交还给内建选择器。
@@ -114,3 +112,12 @@ onlyBuiltDependencies:
 插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（^0.1.2-rc.1，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
 
 命令：`pnpm run build`（tsdown，双半）、`pnpm run typecheck`、`pnpm run test`（node:test 经 tsx；无需 SSH 服务器——连接池接受注入的 client 工厂，SFTP 表面使用假件）。
+
+`ssh2` 位于 `devDependencies`，因为它是构建输入而非运行时依赖：`pnpm run build` 会把它打进 `lib/index.js`。任何源码改动都要连同重新构建的 `lib/` 一起提交，否则 GitHub 安装拿到的是旧代码。
+
+<a id="第三方代码"></a>
+### 第三方代码
+
+`lib/index.js` 内含 `ssh2`（MIT）、`asn1`（MIT）、`safer-buffer`（MIT）、`tweetnacl`（Unlicense）、`bcrypt-pbkdf`（BSD-3-Clause）的打包副本，许可证全文见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
+打包把安全更新的责任移到了本仓库：`ssh2` 的安全公告不再经用户自己的 `pnpm update` 到达他们。修补方式是 `pnpm update ssh2 && pnpm run build`，然后把结果提交到这里。

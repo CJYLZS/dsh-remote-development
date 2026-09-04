@@ -11,9 +11,6 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: 3.18.2
-      ssh2:
-        specifier: ^1.16.0
-        version: 1.17.0
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.2
@@ -87,6 +84,9 @@ importers:
       react:
         specifier: ^18.2.0
         version: 18.3.1
+      ssh2:
+        specifier: ^1.16.0
+        version: 1.17.0
       tsdown:
         specifier: ^0.22.2
         version: 0.22.14(tsx@4.23.13)(typescript@6.0.3)

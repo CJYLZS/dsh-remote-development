@@ -13,13 +13,14 @@ This plugin adds lightweight remote development to DeepSeek Harness: you registe
 - [Configuration](#configuration)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
+  - [Third-party code](#third-party-code)
 
 -----
 
 <a id="use-this-plugin"></a>
 ## Use this plugin
 
-Install straight from GitHub — the built `lib/` is committed, so no build step is needed:
+Install straight from GitHub — the built `lib/` is committed, so no build step and no profile configuration are needed:
 
 ```sh
 dsh plugin add --profile web github:CJYLZS/dsh-remote-development
@@ -36,17 +37,13 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 The `link:` install points the profile at the checkout directory, so later `pnpm run build` runs apply on the next harness restart without re-adding.
 
-### First install: ssh2's build script
+### Why the install needs no build-script approval
 
-pnpm ≥ 11 blocks dependency build scripts by default, and a GitHub install brings `ssh2` into the profile's workspace fresh, so the first `dsh plugin add` can fail with `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…`. The safe fix is to run `pnpm approve-builds` in the profile directory (`~/.dsh/profiles/<profile>`) and decline both builds, which records the decision in the profile's `pnpm-workspace.yaml`; equivalently, write it by hand there and re-run the add command:
+`ssh2` ships an install script that probes for an optional native crypto binding, and pnpm ≥ 10 blocks dependency build scripts by default — as an ordinary dependency it would fail the first `dsh plugin add` with `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…`. pnpm reads build permission only from the workspace root, so nothing this package declares about itself can grant it, and the profile is not this package's workspace.
 
-```yaml
-onlyBuiltDependencies:
-  - ssh2
-  - cpu-features
-```
+So `ssh2` is not an installed dependency: it is bundled into `lib/index.js` at build time, along with its pure-JS dependencies (`asn1`, `safer-buffer`, `tweetnacl`, `bcrypt-pbkdf`). The plugin's only runtime dependency is `@deepseek-ai/schemastery`, which has no build script. Nothing needs a C++ toolchain, and the profile's `pnpm-workspace.yaml` stays untouched.
 
-Declining both is the safe choice: `ssh2`'s install script only probes an optional native crypto binding, and `ssh2` runs fully on its pure-JS fallback without it; `cpu-features` is that optional binding (a `node-gyp` native build), and `ssh2` already guards its one runtime `require` in a `try/catch`. Neither needs a toolchain or network at install time, and approving them only matters if you want the acceleration and have a full C++ build environment. No other build scripts are involved.
+The two optional native accelerators (`cpu-features` and `ssh2`'s own binding) are stubbed out at build time, so every platform takes `ssh2`'s pure-JS cipher path — the same path an unapproved install would have taken anyway. `ssh2` guards both requires in `try/catch`, so this is its documented fallback. See [Third-party code](#third-party-code) for the maintenance consequence.
 
 Restart the harness after installing. The Web GUI then shows:
 
@@ -103,6 +100,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **`@` file references are not supported in remote sessions.** Typing `@` in a remote session yields a single explicit "not supported yet" candidate rather than a silent failure; the reference-source interface is reserved for a later phase.
 - **No mirror or sync layer.** Anchor directories hold metadata only, not file copies; every read and write crosses SSH, bounded by `maxFileBytes`.
 - **Search needs a remote ripgrep.** The `rg` binary must exist on the remote machine (configurable via `remoteRipgrep`); otherwise search tools fail on remote paths.
+- **SSH runs on pure JS, not native crypto.** The bundled `ssh2` never loads its optional native accelerators, so throughput on large SFTP transfers is lower than a natively-built `ssh2` would give. This matches what an unapproved install produced before, since pnpm blocked that build anyway.
 - **Not published to npm.** Install from GitHub (`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`) or from a local checkout path; the GitHub install uses the committed `lib/` build, while a local path links the directory so rebuilds apply on restart.
 - **The built-in directory-picker flow is shadowed, not replaced.** Both directory-flow registrations coexist at distinct priorities (this plugin uses -1, lowest renders); unloading this plugin hands the slot back to the built-in picker.
 
@@ -114,3 +112,12 @@ Machines are managed in the settings section; the plugin itself takes config def
 The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (^0.1.2-rc.1, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
 
 Commands: `pnpm run build` (tsdown, both halves), `pnpm run typecheck`, `pnpm run test` (node:test via tsx; no SSH server needed — the pool accepts an injected client factory and the SFTP surface is faked).
+
+`ssh2` is a `devDependency` because it is build input, not a runtime dependency: `pnpm run build` bundles it into `lib/index.js`. Commit the rebuilt `lib/` with any source change, or the GitHub install serves stale code.
+
+<a id="third-party-code"></a>
+### Third-party code
+
+`lib/index.js` contains bundled copies of `ssh2` (MIT), `asn1` (MIT), `safer-buffer` (MIT), `tweetnacl` (Unlicense), and `bcrypt-pbkdf` (BSD-3-Clause). Their license texts are reproduced in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+Bundling moves security updates onto this repository: an `ssh2` advisory no longer reaches users through their own `pnpm update`. Patching it means `pnpm update ssh2 && pnpm run build`, then committing the result here.
