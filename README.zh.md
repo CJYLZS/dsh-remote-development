@@ -36,6 +36,18 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 `link:` 安装把 profile 指向检出目录，之后每次 `pnpm run build` 重启 harness 即生效，无需重新 add。
 
+### 首次安装：ssh2 的构建脚本
+
+pnpm ≥ 10 默认拦截依赖的构建脚本，而 GitHub 安装会在 profile 的 workspace 中全新安装 `ssh2`，因此首次 `dsh plugin add` 可能报 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…` 并失败。在 profile 的 `pnpm-workspace.yaml`（`~/.dsh/profiles/<profile>/pnpm-workspace.yaml`）已有的 `allowBuilds` 映射下补齐这两个键，然后重新执行安装命令：
+
+```yaml
+allowBuilds:
+  cpu-features: false
+  ssh2: false
+```
+
+`false` 是安全选择：ssh2 的 install 脚本只探测一个可选的原生加速（cpu-features），没有它 ssh2 以纯 JS 回退路径完整运行——安装时无需工具链和网络。若需要加速且具备构建工具链，可改为 `ssh2: true`。除此之外没有其他构建脚本。
+
 安装后重启 harness。Web GUI 中会出现：
 
 - **dsh-remote-development** 设置分区：添加机器（host、port、用户名；密码、私钥或 SSH agent 认证；可选跳板机）并测试连接；

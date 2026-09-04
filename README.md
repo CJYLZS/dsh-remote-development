@@ -36,6 +36,18 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 The `link:` install points the profile at the checkout directory, so later `pnpm run build` runs apply on the next harness restart without re-adding.
 
+### First install: ssh2's build script
+
+pnpm ≥ 10 blocks dependency build scripts by default, and a GitHub install brings `ssh2` into the profile's workspace fresh, so the first `dsh plugin add` can fail with `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…`. Decide both keys once under the existing `allowBuilds` map in the profile's `pnpm-workspace.yaml` (`~/.dsh/profiles/<profile>/pnpm-workspace.yaml`) and re-run the add command:
+
+```yaml
+allowBuilds:
+  cpu-features: false
+  ssh2: false
+```
+
+`false` is the safe choice: ssh2's install script only probes an optional native acceleration (cpu-features), and ssh2 runs fully on its pure-JS fallback without it — no toolchain or network needed at install time. If you want the acceleration and have a build toolchain, use `ssh2: true` instead. No other build scripts are involved.
+
 Restart the harness after installing. The Web GUI then shows:
 
 - a **dsh-remote-development** settings section where you add machines (host, port, username; password, private key, or SSH agent authentication; optional jump proxy) and test them;
