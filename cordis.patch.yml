@@ -1,0 +1,34 @@
+# dsh-remote-development bundle patch: inserts this plugin into a profile's layer stack.
+#
+# The plugin is ONE row: its apply() mounts every routing provider (ctx.fs /
+# ctx.subprocess / ctx.shell), the system-prompt section, and the web routes.
+# The three base execution-world rows are disabled so this package's routing
+# providers are the only providers of those services — patch semantics cannot
+# retarget a row's `name` (a name mismatch is skipped with a warning), so the
+# swap is disable + insert. Disable rows are TOP-LEVEL patch entries (they
+# locate the already-inserted base rows by id); only the new plugin row uses
+# `insert`.
+#
+# Scope: profiles that stack dsh-base. `fs-sandbox`, `subprocess`, and
+# `bash-sandbox` exist in every dsh-base composition, so no disable row ever
+# targets a missing entry there. sdk-minimal (fs-local, no bash-sandbox) is
+# not a supported target: leaving its rows alone would duplicate-register
+# ctx.fs and fail boot loud — install this bundle on web/headless/sdk/acp.
+#
+# Platform notes:
+# - The bash router row replaces bash-sandbox on POSIX hosts only; on win32
+#   hosts pwsh-sandbox stays the ctx.shell provider, untouched.
+# - The subprocess router row stays enabled on every host platform: on win32
+#   it delegates every call to the inherited local runtime (remote routing is
+#   a POSIX-host capability in v1), so pwsh-sandbox keeps a usable
+#   ctx.subprocess and nothing crashes.
+# - The fs router row is platform-neutral (SFTP works from any host OS).
+- id: fs-sandbox
+  disabled: true
+- id: subprocess
+  disabled: true
+- id: bash-sandbox
+  disabled: true
+- insert:
+    - id: dsh-remote-development
+      name: 'dsh-remote-development'

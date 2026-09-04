@@ -1,0 +1,19 @@
+# Standalone workspace boundary: pnpm stops its upward workspace search here,
+# so the plugin is managed independently of the dsh checkout it lives inside.
+packages:
+  - .
+
+# Build scripts reviewed (same policy shape as the dsh checkout): esbuild
+# powers the tsdown bundle; node-pty + koffi are the native PTY/process
+# closure the local subprocess runtime needs; ssh2's script only
+# optional-builds cpu-features, which is denied.
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  cpu-features: false
+  esbuild: true
+  koffi: true
+  node-pty: true
+  ssh2: true
+
+# Keep the store inside the project (no writes outside the plugin directory).
+storeDir: .pnpm-store
