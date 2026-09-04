@@ -1,8 +1,3 @@
----
-description: "DeepSeek Harness 的远程开发插件：通过 SSH 选择远程工作区，让 agent 用与本地相同的工具在其中工作；面向需要操作远程机器的用户。"
-kind: "package-reference"
----
-
 # dsh-remote-development
 
 [English](README.md) | 中文
@@ -24,17 +19,24 @@ kind: "package-reference"
 <a id="使用本插件"></a>
 ## 使用本插件
 
-插件是树外目录（不是 npm 包），先构建再从路径安装：
+直接从 GitHub 安装即可——`lib/` 构建产物已入库，无需构建：
 
 ```sh
-cd lib/dsh-remote-development
-pnpm install          # 自包含 workspace；store 位于 .pnpm-store/
-pnpm run build        # 产出 lib/index.js（宿主半）与 lib/client.js（浏览器半）
-
-dsh plugin add --profile web link:/absolute/path/to/lib/dsh-remote-development
+dsh plugin add --profile web github:CJYLZS/dsh-remote-development
 ```
 
-之后重启 harness。Web GUI 中会出现：
+若要基于本地检出开发插件，先构建再添加检出路径：
+
+```sh
+cd dsh-remote-development
+pnpm install          # 自包含 workspace；store 位于 .pnpm-store/
+pnpm run build        # 产出 lib/index.js（宿主半）与 lib/client.js（浏览器半）
+dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
+```
+
+`link:` 安装把 profile 指向检出目录，之后每次 `pnpm run build` 重启 harness 即生效，无需重新 add。
+
+安装后重启 harness。Web GUI 中会出现：
 
 - **dsh-remote-development** 设置分区：添加机器（host、port、用户名；密码、私钥或 SSH agent 认证；可选跳板机）并测试连接；
 - 工作区目录流（hero 的"选择目录"对话框与侧边栏工作区选择器）中的**远程**标签页：列出机器、浏览远程目录、新建文件夹，并把远程目录设为会话工作区。
@@ -89,7 +91,7 @@ dsh plugin add --profile web link:/absolute/path/to/lib/dsh-remote-development
 - **远程会话不支持 `@` 文件引用。** 远程会话中输入 `@` 会给出单条明确的"暂不支持"候选，而不是静默失败；引用源接口已预留到后续阶段。
 - **没有镜像或同步层。** 锚点目录只保存元数据，不保存文件副本；每次读写都经 SSH，受 `maxFileBytes` 限制。
 - **搜索依赖远程 ripgrep。** 远程机器上必须存在 `rg` 二进制（可用 `remoteRipgrep` 配置）；否则搜索工具在远程路径上失败。
-- **不发布 npm。** 通过 `dsh plugin add` 从本地路径安装；profile 以链接方式引用目录，添加前必须已构建出 `lib/`。
+- **不发布 npm。** 从 GitHub 安装（`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`）或从本地检出路径安装；GitHub 安装使用已入库的 `lib/` 构建，本地路径则以链接方式指向目录，重新构建后重启即生效。
 - **内建目录选择流是被覆盖而非替换。** 两个目录流注册以不同优先级共存（本插件使用 -1，最低者优先渲染）；卸载本插件后槽位交还给内建选择器。
 
 -----

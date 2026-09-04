@@ -1,8 +1,3 @@
----
-description: "Remote development for DeepSeek Harness: pick a remote workspace over SSH and let the agent work on it with the same local tools; for users running the agent against remote machines."
-kind: "package-reference"
----
-
 # dsh-remote-development
 
 English | [中文](README.zh.md)
@@ -24,17 +19,24 @@ This plugin adds lightweight remote development to DeepSeek Harness: you registe
 <a id="use-this-plugin"></a>
 ## Use this plugin
 
-The plugin is an out-of-tree directory (not an npm package). Install it from its path and build first:
+Install straight from GitHub — the built `lib/` is committed, so no build step is needed:
 
 ```sh
-cd lib/dsh-remote-development
-pnpm install          # self-contained workspace; store lives in .pnpm-store/
-pnpm run build        # emits lib/index.js (host) and lib/client.js (browser)
-
-dsh plugin add --profile web link:/absolute/path/to/lib/dsh-remote-development
+dsh plugin add --profile web github:CJYLZS/dsh-remote-development
 ```
 
-Restart the harness afterwards. The Web GUI then shows:
+To develop the plugin from a local checkout instead, build first and add the checkout path:
+
+```sh
+cd dsh-remote-development
+pnpm install          # self-contained workspace; store lives in .pnpm-store/
+pnpm run build        # emits lib/index.js (host) and lib/client.js (browser)
+dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
+```
+
+The `link:` install points the profile at the checkout directory, so later `pnpm run build` runs apply on the next harness restart without re-adding.
+
+Restart the harness after installing. The Web GUI then shows:
 
 - a **dsh-remote-development** settings section where you add machines (host, port, username; password, private key, or SSH agent authentication; optional jump proxy) and test them;
 - in the workspace directory flow (the hero "choose directory" dialog and the sidebar workspaces picker), a **远程** tab that lists machines, browses remote directories, creates folders, and sets a remote directory as the session workspace.
@@ -89,7 +91,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **`@` file references are not supported in remote sessions.** Typing `@` in a remote session yields a single explicit "not supported yet" candidate rather than a silent failure; the reference-source interface is reserved for a later phase.
 - **No mirror or sync layer.** Anchor directories hold metadata only, not file copies; every read and write crosses SSH, bounded by `maxFileBytes`.
 - **Search needs a remote ripgrep.** The `rg` binary must exist on the remote machine (configurable via `remoteRipgrep`); otherwise search tools fail on remote paths.
-- **Not published to npm.** Install from a local path with `dsh plugin add`; the profile links the directory, so the built `lib/` must exist before adding.
+- **Not published to npm.** Install from GitHub (`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`) or from a local checkout path; the GitHub install uses the committed `lib/` build, while a local path links the directory so rebuilds apply on restart.
 - **The built-in directory-picker flow is shadowed, not replaced.** Both directory-flow registrations coexist at distinct priorities (this plugin uses -1, lowest renders); unloading this plugin hands the slot back to the built-in picker.
 
 -----
