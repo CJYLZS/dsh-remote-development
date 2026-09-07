@@ -44,8 +44,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T
 }
 
-/** List saved machines plus the current id. */
-export function listMachines(): Promise<{ machines: ClientMachine[]; currentId: string | null }> {
+/** List saved machines. */
+export function listMachines(): Promise<{ machines: ClientMachine[] }> {
   return call('GET', '/machines')
 }
 
@@ -57,11 +57,6 @@ export function saveMachine(machine: Record<string, unknown>): Promise<{ machine
 /** Delete one machine by id. */
 export function deleteMachine(id: string): Promise<{ ok: boolean }> {
   return call('POST', '/machines/delete', { id })
-}
-
-/** Set (or clear) the current machine. */
-export function setCurrentMachine(id: string | null): Promise<{ ok: boolean }> {
-  return call('POST', '/machines/current', { id })
 }
 
 /** Test one machine's connection (saved id or unsaved fields). */

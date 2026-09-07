@@ -35,7 +35,17 @@ export function registerPrompt(ctx: Context, world: RemoteWorld): void {
       if (local.kind !== 'remote') return ''
       const anchor = local.route.anchor
       const machine = world.machineForAnchor(anchor)
-      if (!machine) return ''
+      if (!machine) {
+        // The workspace outlived its machine: say so instead of staying
+        // silent — the tools will refuse and the model should know why.
+        const who = `${anchor.meta.username || 'user'}@${anchor.meta.host}:${anchor.meta.port}`
+        return [
+          '## Remote workspace (unavailable)',
+          `This session's workspace directory is a handle for a remote workspace on ${who}, but that machine is no longer configured.`,
+          'File and shell tools refuse to act on it until the machine is re-added in the remote development settings, or the workspace directory is deleted.',
+          'Tell the operator why operations fail instead of retrying them.',
+        ].join('\n')
+      }
       const who = `${machine.machine.username || 'user'}@${machine.machine.host}`
       const name = remoteBasename(local.route.remotePath) || local.route.remotePath
       return [
@@ -60,7 +70,10 @@ export function registerPrompt(ctx: Context, world: RemoteWorld): void {
         const cwd = context.agent?.session?.header?.cwd
         if (!cwd) return undefined
         const local = world.classifyHostPath(cwd)
-        return local.kind === 'remote' ? local.route.remotePath : cwd
+        if (local.kind !== 'remote') return cwd
+        // An anchor whose machine is gone reports its local handle: the
+        // remote path would name a directory no tool can reach.
+        return world.machineForAnchor(local.route.anchor) ? local.route.remotePath : cwd
       })
     }))
   }

@@ -1,13 +1,15 @@
 /**
- * The settings page: the saved-machine registry (add, edit, test, set
- * current, delete). Pure presentation — every fact and callback arrives
- * through the four props shares.
+ * The settings page: the saved-machine registry (add, edit, test, delete).
+ * Pure presentation — every fact and callback arrives through the props
+ * shares. Machines are standby connection records only: which machine serves
+ * a workspace is decided by that workspace's anchor, so there is no
+ * "current machine" to pick here.
  * @module dsh-remote-development/client/settings
  */
 
 import { Fragment, createElement, useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Button, Input, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the settings section owner-share declaration.
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -15,10 +17,9 @@ import type { ClientMachine } from './api.ts'
 
 /** Injected face bound in the plugin's apply closure. */
 export interface SettingsInjected {
-  listMachines: () => Promise<{ machines: ClientMachine[]; currentId: string | null }>
+  listMachines: () => Promise<{ machines: ClientMachine[] }>
   saveMachine: (machine: Record<string, unknown>) => Promise<{ machine: ClientMachine }>
   deleteMachine: (id: string) => Promise<{ ok: boolean }>
-  setCurrentMachine: (id: string | null) => Promise<{ ok: boolean }>
   testConnection: (machine: Record<string, unknown>) => Promise<{ ok: boolean; error?: string; platform?: string }>
   t: Translate
 }
@@ -75,7 +76,6 @@ function field(label: string, value: string, onChange: (v: string) => void, plac
 export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjected): ReactElement {
   const { t } = props
   const [machines, setMachines] = useState<ClientMachine[]>([])
-  const [currentId, setCurrentId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -86,7 +86,6 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   const refresh = useCallback((): void => {
     void props.listMachines().then((r) => {
       setMachines(r.machines)
-      setCurrentId(r.currentId)
     }).catch((err: Error) => setError(err.message))
   }, [props])
 
@@ -147,14 +146,8 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
     })
   }
 
-  const current = machines.find((m) => m.id === currentId) ?? null
-
   return createElement('div', { className: 'rdv-page' },
     createElement('p', { className: 'rdv-intro' }, t('settings.intro')),
-    current !== null && createElement('div', { className: 'rdv-banner' },
-      createElement(StateDot, { state: 'ongoing' }),
-      t('settings.currentMachine').replace('{name}', `${current.name} (${current.username}@${current.host}:${current.port})`),
-    ),
     draft === null && createElement('div', { className: 'rdv-actions', style: { justifyContent: 'flex-start', marginTop: 0 } },
       createElement(Button, {
         variant: 'primary',
@@ -166,22 +159,15 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
     createElement('div', { className: 'rdv-cards' },
       machines.length === 0 && draft === null
         ? createElement('div', { className: 'rdv-empty' }, t('settings.noMachines'))
-        : machines.map((m) => createElement('div', { key: m.id, className: `rdv-card${m.id === currentId ? ' rdv-cardCurrent' : ''}` },
+        : machines.map((m) => createElement('div', { key: m.id, className: 'rdv-card' },
             createElement('div', { className: 'rdv-cardMain' },
               createElement('div', { className: 'rdv-cardName' },
-                createElement(StateDot, { state: m.id === currentId ? 'done' : 'warning' }),
-                createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-                  m.name,
-                  m.id === currentId && createElement('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontWeight: 400 } }, ` · ${t('settings.current')}`),
-                ),
+                createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, m.name),
               ),
               createElement('div', { className: 'rdv-cardHost' }, `${m.username}@${m.host}:${m.port}`),
             ),
             createElement('div', { className: 'rdv-cardActions' },
               createElement(Button, { size: 'sm', disabled: busy, onClick: () => test({ machineId: m.id }) }, t('settings.test')),
-              m.id === currentId
-                ? createElement(Button, { size: 'sm', disabled: busy, onClick: () => { void props.setCurrentMachine(null).then(refresh) } }, t('settings.clearCurrent'))
-                : createElement(Button, { size: 'sm', disabled: busy, onClick: () => { void props.setCurrentMachine(m.id).then(refresh) } }, t('settings.setCurrent')),
               createElement(Button, {
                 size: 'sm',
                 disabled: busy,

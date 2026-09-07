@@ -62,8 +62,9 @@ export class RemoteWorld {
     this.registryFile = path.join(base, 'machines.json')
     this.knownHostsFile = path.join(base, 'known_hosts.json')
     this.registry = loadRegistry(this.registryFile)
-    // A registry that exists with `currentId: null` means "explicitly no
-    // active machine"; only a fresh registry lets the config default through.
+    // A fresh registry adopts the configured host as its first saved machine
+    // (standby only — nothing routes to it until a workspace's anchor names
+    // it); an existing registry is left untouched.
     if (!registryExists(this.registryFile) && config.host) {
       const machine = sanitizeMachine({
         host: config.host,
@@ -76,7 +77,6 @@ export class RemoteWorld {
         workspace: config.workspace,
       })
       this.registry.machines.push(machine)
-      this.registry.currentId = machine.id
       saveRegistry(this.registryFile, this.registry)
     }
   }
@@ -94,12 +94,6 @@ export class RemoteWorld {
   /** All saved machines, plus the config default when no registry exists. */
   listMachines(): Machine[] {
     return [...this.registry.machines]
-  }
-
-  /** The currently active machine, or null. */
-  currentMachine(): Machine | null {
-    if (!this.registry.currentId) return null
-    return this.registry.machines.find((m) => m.id === this.registry.currentId) ?? null
   }
 
   /**
@@ -126,30 +120,12 @@ export class RemoteWorld {
     const index = this.registry.machines.findIndex((m) => m.id === id)
     if (index < 0) return false
     this.registry.machines.splice(index, 1)
-    if (this.registry.currentId === id) this.registry.currentId = null
     saveRegistry(this.registryFile, this.registry)
     const key = [...this.pools.keys()].find((k) => k.startsWith(id + '\u0000'))
     if (key) {
       this.pools.get(key)?.close()
       this.pools.delete(key)
     }
-    return true
-  }
-
-  /**
-   * Set (or clear) the active machine.
-   * @param id - machine id, or null to deactivate.
-   * @returns true when the registry changed.
-   */
-  setCurrent(id: string | null): boolean {
-    if (id === null) {
-      this.registry.currentId = null
-      saveRegistry(this.registryFile, this.registry)
-      return true
-    }
-    if (!this.registry.machines.some((m) => m.id === id)) return false
-    this.registry.currentId = id
-    saveRegistry(this.registryFile, this.registry)
     return true
   }
 
@@ -412,6 +388,21 @@ export class RemoteWorld {
 export interface AnchorRouteInfo {
   anchor: AnchorInfo
   remotePath: string
+}
+
+/**
+ * The refusal message for an anchor whose machine is no longer configured.
+ * Anchors survive machine deletion (their metadata is durable), but without
+ * a matching registry/config identity nothing may act on them — callers
+ * surface this instead of silently falling back to another machine or the
+ * local host.
+ * @param anchor - the orphaned anchor.
+ * @returns the user-facing error message.
+ */
+export function unconfiguredMachineMessage(anchor: AnchorInfo): string {
+  const who = `${anchor.meta.username || 'user'}@${anchor.meta.host}:${anchor.meta.port}`
+  return `the machine ${who} behind remote workspace "${anchor.dir}" is no longer configured`
+    + ` — re-add it in the remote development settings, or delete the workspace directory`
 }
 
 /** Local prefix containment for anchor dirs (lexical, no I/O). */

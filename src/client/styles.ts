@@ -8,10 +8,8 @@
 const CSS = `
 .rdv-page { display: flex; flex-direction: column; gap: 16px; max-width: 720px; }
 .rdv-intro { margin: 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; }
-.rdv-banner { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 8px; color: var(--dsw-alias-label-secondary); font-size: 13px; background: var(--dsw-alias-bg-layer-2); }
 .rdv-cards { display: flex; flex-direction: column; gap: 8px; }
 .rdv-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); }
-.rdv-cardCurrent { border-color: var(--dsw-alias-button-info-fill); }
 .rdv-cardMain { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .rdv-cardName { color: var(--dsw-alias-label-primary); font-size: 14px; font-weight: 510; line-height: 20px; display: flex; align-items: center; gap: 8px; }
 .rdv-cardHost { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

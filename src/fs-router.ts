@@ -22,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { SFTPWrapper } from 'ssh2'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
+import { unconfiguredMachineMessage } from './world.ts'
 import { listRemoteDir, lstatPath, readRemoteBytes, readRemoteText, statPath, streamRemoteText, editRemoteText, writeRemoteText } from './remote-io.ts'
 import { relUnder } from './paths.ts'
 
@@ -64,7 +65,9 @@ export class RoutingFileSystem extends SandboxedFileSystem {
   /**
    * Decide the execution world for a path. Anchor-local coordinates win, then
    * registered remote roots (the model may name remote paths it saw in
-   * command output), then the local backend.
+   * command output), then the local backend. An anchor whose machine is no
+   * longer configured refuses instead of falling back — serving the anchor
+   * directory locally would silently act on the wrong host.
    * @param p - the model/plugin-supplied path.
    * @param cwd - resolution base override.
    * @returns the remote route with its machine, or null for the local backend.
@@ -75,7 +78,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     if (local.kind === 'remote') {
       const machine = this.world.machineForAnchor(local.route.anchor)
       if (machine) return { machine, remotePath: local.route.remotePath }
-      return null
+      throw new FsError(unconfiguredMachineMessage(local.route.anchor), 'FS_IO_ERROR')
     }
     if (local.kind === 'meta') return null
     if (path.isAbsolute(p)) {
@@ -83,6 +86,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
       if (remote) {
         const machine = this.world.machineForAnchor(remote.anchor)
         if (machine) return { machine, remotePath: remote.remotePath }
+        throw new FsError(unconfiguredMachineMessage(remote.anchor), 'FS_IO_ERROR')
       }
     }
     return null
@@ -104,6 +108,23 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     } catch {
       return null
     }
+  }
+
+  /**
+   * The refusal for a target whose machine record is gone. The identity is
+   * parsed from the machine id (`host|port|user`) so the message names the
+   * machine even though the registry entry no longer exists.
+   * @param displayPath - the model-facing path.
+   * @param machineId - the machine id from the target key.
+   * @returns the typed filesystem error.
+   */
+  private static unconfiguredTarget(displayPath: string, machineId: string): FsError {
+    const [host = '?', port = '?', username = '?'] = machineId.split('|')
+    return new FsError(
+      `the machine ${username}@${host}:${port} behind "${displayPath}" is no longer configured`
+        + ' — re-add it in the remote development settings, or delete the workspace directory',
+      'FS_IO_ERROR',
+    )
   }
 
   private async sftpFor(machine: MachineRef): Promise<SFTPWrapper> {
@@ -144,7 +165,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const remote = RoutingFileSystem.parseKey(target)
     if (remote === null) return super.stat(target, signal)
     const machine = this.world.machineById(remote.machineId)
-    if (!machine) throw new FsError(`the machine for "${target.displayPath}" is no longer configured`, 'FS_IO_ERROR')
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     return statPath(await this.sftpFor(machine), remote.remotePath, signal, this.opTimeoutMs)
   }
 
@@ -158,7 +179,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const remote = RoutingFileSystem.parseKey(target)
     if (remote === null) return super.readText(target, signal)
     const machine = this.world.machineById(remote.machineId)
-    if (!machine) throw new FsError(`the machine for "${target.displayPath}" is no longer configured`, 'FS_IO_ERROR')
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     return readRemoteText(await this.sftpFor(machine), remote.remotePath, signal, this.opTimeoutMs, this.maxFileBytes)
   }
 
@@ -166,7 +187,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const remote = RoutingFileSystem.parseKey(target)
     if (remote === null) return super.streamText(target, signal)
     const machine = this.world.machineById(remote.machineId)
-    if (!machine) throw new FsError(`the machine for "${target.displayPath}" is no longer configured`, 'FS_IO_ERROR')
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     return streamRemoteText(await this.sftpFor(machine), remote.remotePath, signal, this.opTimeoutMs, this.maxFileBytes)
   }
 
@@ -174,7 +195,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const remote = RoutingFileSystem.parseKey(target)
     if (remote === null) return super.readBytes(target, signal, maxBytes)
     const machine = this.world.machineById(remote.machineId)
-    if (!machine) throw new FsError(`the machine for "${target.displayPath}" is no longer configured`, 'FS_IO_ERROR')
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     return readRemoteBytes(await this.sftpFor(machine), remote.remotePath, signal, this.opTimeoutMs, maxBytes)
   }
 
@@ -182,7 +203,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const remote = RoutingFileSystem.parseKey(target)
     if (remote === null) return super.listDir(target, signal)
     const machine = this.world.machineById(remote.machineId)
-    if (!machine) throw new FsError(`the machine for "${target.displayPath}" is no longer configured`, 'FS_IO_ERROR')
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     const sftp = await this.sftpFor(machine)
     const entries = await listRemoteDir(sftp, remote.remotePath, signal, this.opTimeoutMs)
     return entries.map((e) => {
@@ -207,7 +228,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const remote = RoutingFileSystem.parseKey(target)
     if (remote === null) return super.writeText(target, content, expected, signal, sandboxPolicy)
     const machine = this.world.machineById(remote.machineId)
-    if (!machine) throw new FsError(`the machine for "${target.displayPath}" is no longer configured`, 'FS_IO_ERROR')
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     this.checkRemoteMutation(remote.remotePath, target.displayPath, sandboxPolicy)
     return this.lockRemote(target.targetKey as unknown as string, async () =>
       writeRemoteText(await this.sftpFor(machine), remote.remotePath, content, expected, signal, this.opTimeoutMs))
@@ -223,7 +244,7 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const remote = RoutingFileSystem.parseKey(target)
     if (remote === null) return super.editText(target, edit, expected, signal, sandboxPolicy)
     const machine = this.world.machineById(remote.machineId)
-    if (!machine) throw new FsError(`the machine for "${target.displayPath}" is no longer configured`, 'FS_IO_ERROR')
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     this.checkRemoteMutation(remote.remotePath, target.displayPath, sandboxPolicy)
     return this.lockRemote(target.targetKey as unknown as string, async () =>
       editRemoteText(await this.sftpFor(machine), remote.remotePath, edit, expected, signal, this.opTimeoutMs))

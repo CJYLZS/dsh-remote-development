@@ -94,7 +94,10 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
   const loadMachines = useCallback((): void => {
     void props.listMachines().then((r) => {
       setMachines(r.machines)
-      const preferred = r.machines.find((m) => m.id === r.currentId) ?? r.machines[0]
+      // No "current machine" exists any more: the dropdown preselects the
+      // first saved machine and the operator's explicit choice in this
+      // dialog is the only thing that directs execution.
+      const preferred = r.machines[0]
       if (preferred) {
         setMachineId((prev) => (r.machines.some((m) => m.id === prev) ? prev : preferred.id))
       }

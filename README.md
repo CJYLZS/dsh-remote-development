@@ -52,6 +52,8 @@ Restart the harness after installing. The Web GUI then shows:
 
 Setting a remote workspace creates an **anchor** under `$DSH_HOME/remote-workspaces/<host>-<user>-<port>/<basename>` — a real local directory carrying remote coordinates in a metadata file. A session whose working directory is an anchor routes to the remote machine; every other path keeps local behavior, so existing sessions are unaffected.
 
+**The workspace decides the machine — nothing else does.** There is no "current machine" and no default target: saved machines are standby connection records only, and every remote operation names its machine explicitly (the picker dialog commits one machine + path; the JSON routes require a `machineId` and answer `400` without one). An anchor keeps routing to the machine recorded in its metadata; if that machine is later deleted, operations on the workspace fail with a typed "machine is no longer configured" error instead of silently running somewhere else — re-add the machine to resume, or delete the workspace directory.
+
 While a session sits on an anchor, the model is told (one system-prompt section) that its workspace is remote and that the usual tools operate there directly.
 
 -----
@@ -104,6 +106,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **Not published to npm.** Install from GitHub (`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`) or from a local checkout path; the GitHub install uses the committed `lib/` build, while a local path links the directory so rebuilds apply on restart.
 - **The built-in directory-picker flow is shadowed, not replaced.** Both directory-flow registrations coexist at distinct priorities (this plugin uses -1, lowest renders); unloading this plugin hands the slot back to the built-in picker.
 - **The 本机 (local) tab follows the host's composed picker capability.** The host resolves its directory-picker backend once at boot: a WSL without zenity/kdialog, an SSH launch, a non-loopback bind, or a display-less Linux all compose the `browse` backend (only the `list`/`createDirectory` primitives — no OS chooser). The local tab branches on that resolution — `native` opens the OS chooser, `browse` drives the host's in-app web browser instead; before this, the tab hard-coded `pick`, which fails with `directory-picker/unavailable` on such boots.
+- **Deleting a machine strands its workspaces on purpose.** Anchors survive machine deletion, and every tool surface refuses them with the same "no longer configured" error (fs, bash, subprocess, and the prompt's cwd variable falls back to the local handle) rather than executing on another machine or locally.
 
 -----
 

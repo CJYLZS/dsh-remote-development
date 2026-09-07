@@ -52,6 +52,8 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 设置远程工作区会在 `$DSH_HOME/remote-workspaces/<host>-<user>-<port>/<basename>` 下创建一个**锚点**——一个携带远程坐标元数据文件的真实本地目录。会话工作目录落在锚点上即路由到远程机器；其余路径保持本地行为，既有会话不受影响。
 
+**机器由工作区决定，没有别的途径。** 不存在「当前机器」或默认目标：保存的机器只是待命的连接记录，每个远程操作都显式指名机器（选择器对话框提交时选定「机器 + 路径」；JSON 路由必须携带 `machineId`，缺失一律返回 `400`）。锚点始终路由到其元数据记录的机器；若该机器随后被删除，工作区上的操作会以明确的「机器已失配（no longer configured）」错误失败，而不是悄悄换到别的机器或本地执行——重新添加机器即可恢复，或删除该工作区目录。
+
 会话位于锚点时，模型会通过一个 system-prompt 分区获知：工作区是远程的，常用工具在其中直接生效。
 
 -----
@@ -104,6 +106,7 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 - **不发布 npm。** 从 GitHub 安装（`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`）或从本地检出路径安装；GitHub 安装使用已入库的 `lib/` 构建，本地路径则以链接方式指向目录，重新构建后重启即生效。
 - **内建目录选择流是被覆盖而非替换。** 两个目录流注册以不同优先级共存（本插件使用 -1，最低者优先渲染）；卸载本插件后槽位交还给内建选择器。
 - **「本机」页签跟随宿主组合的 picker 能力。** 宿主在启动时解析一次目录选择器后端：WSL 缺少 zenity/kdialog、经 SSH 启动、绑定非回环地址或无显示会话的 Linux 都会组合出 `browse` 后端（只有 `list`/`createDirectory` 原语，没有 OS 选择器）。插件的「本机」页签据此分流——`native` 打开 OS 选择器，`browse` 改用宿主的网页目录浏览器；在此之前的版本「本机」页签硬编码 `pick`，在这类启动下会以 `directory-picker/unavailable` 失败。
+- **删除机器后其工作区被有意搁置。** 锚点在机器删除后仍然存在，所有工具面对它都会以同样的「机器已失配」错误拒绝（fs、bash、subprocess，提示词的 `cwd` 变量回退为本地句柄），而不是换一台机器或在本机执行。
 
 -----
 

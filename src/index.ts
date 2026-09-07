@@ -32,8 +32,23 @@ import { registerRoutes } from './routes.ts'
 
 export const name = 'dsh-remote-development'
 
-/** systemPrompt must exist before the section registers; sandboxPolicy before the sandboxed providers read it; agents before the per-agent cwd override enumerates live agents. */
-export const inject = ['systemPrompt', 'sandboxPolicy', 'agents']
+/**
+ * Service dependencies, declared at module level because this is a namespace
+ * plugin: the Loader builds the fiber's inject from this list, and the
+ * `static inject` of the manually constructed provider classes is ignored.
+ * Every service those classes read directly must appear here or the
+ * ancestor-only fiber walk throws "cannot get property … without inject":
+ *   • systemPrompt — the prompt section registers on it.
+ *   • sandboxPolicy — SandboxBashExecutor and SandboxedFileSystem read it.
+ *   • sandbox — SandboxBashExecutor wraps every local command through
+ *     `ctx.sandbox.confine`; without the declaration the walk from this
+ *     plugin's fiber reaches root and every bash call crashes (the incident
+ *     behind the 2025-07 bash-tool outage).
+ *   • agents — the per-agent cwd override enumerates live agents.
+ * (`subprocess` is read by LocalBashExecutor too, but this plugin provides
+ * `ctx.subprocess` itself, so its own store satisfies the walk.)
+ */
+export const inject = ['systemPrompt', 'sandboxPolicy', 'sandbox', 'agents']
 
 export { Config }
 

@@ -19,6 +19,7 @@ import type { ShellExecSpec, ShellProcess, ShellProcessRead, ShellRunResult } fr
 import type { CollectedOutput } from '@deepseek-ai/dsh-subprocess'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
+import { unconfiguredMachineMessage } from './world.ts'
 import { shq } from './paths.ts'
 
 /** Marker written by the cd guard so a failed cd is an infrastructure error. */
@@ -76,7 +77,9 @@ export class RoutingBashExecutor extends SandboxBashExecutor {
   /**
    * Resolve the remote path for a workdir, accepting both coordinates: the
    * anchor-local spelling (session cwd) and a remote path the model saw in
-   * command output.
+   * command output. An anchor whose machine is no longer configured refuses
+   * instead of falling back — running the command locally would silently act
+   * on the wrong host.
    * @param workdir - the resolved local workdir.
    * @returns the machine and remote cwd, or null for the local backend.
    */
@@ -85,12 +88,13 @@ export class RoutingBashExecutor extends SandboxBashExecutor {
     if (local.kind === 'remote') {
       const machine = this.world.machineForAnchor(local.route.anchor)
       if (machine) return { machine, remotePath: local.route.remotePath }
-      return null
+      throw new Error(unconfiguredMachineMessage(local.route.anchor))
     }
     const remote = this.world.classifyRemotePath(workdir)
     if (remote) {
       const machine = this.world.machineForAnchor(remote.anchor)
       if (machine) return { machine, remotePath: remote.remotePath }
+      throw new Error(unconfiguredMachineMessage(remote.anchor))
     }
     return null
   }

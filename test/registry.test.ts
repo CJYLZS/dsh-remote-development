@@ -27,35 +27,35 @@ test('loadRegistry returns a fresh registry for a missing file', () => {
   const dir = tempDir()
   try {
     const data = loadRegistry(path.join(dir, 'machines.json'))
-    assert.deepEqual(data, { version: 1, currentId: null, machines: [] })
+    assert.deepEqual(data, { version: 1, machines: [] })
     assert.equal(registryExists(path.join(dir, 'machines.json')), false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('save + load round-trips machines and the current id', () => {
+test('save + load round-trips machines', () => {
   const dir = tempDir()
   try {
     const file = path.join(dir, 'machines.json')
     const a = sanitizeMachine({ host: 'a', username: 'dev' })
     const b = sanitizeMachine({ host: 'b', username: 'dev' })
-    saveRegistry(file, { version: 1, currentId: b.id, machines: [a, b] })
+    saveRegistry(file, { version: 1, machines: [a, b] })
     assert.equal(registryExists(file), true)
     const loaded = loadRegistry(file)
     assert.equal(loaded.machines.length, 2)
-    assert.equal(loaded.currentId, b.id)
+    assert.equal(loaded.machines[1]?.host, 'b')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('loadRegistry drops a current id that names no machine', () => {
+test('loadRegistry drops the obsolete currentId field from older files', () => {
   const dir = tempDir()
   try {
     const file = path.join(dir, 'machines.json')
-    saveRegistry(file, { version: 1, currentId: 'ghost', machines: [] })
-    assert.equal(loadRegistry(file).currentId, null)
+    saveRegistry(file, { version: 1, currentId: 'ghost', machines: [] } as never)
+    assert.deepEqual(loadRegistry(file), { version: 1, machines: [] })
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

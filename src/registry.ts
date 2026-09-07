@@ -1,8 +1,8 @@
 /**
- * Machine registry: the durable list of saved SSH machines and which one is
- * current. Pure functions over a file path so tests drive real files. Saved
- * machines are STANDBY connections; only an explicit "set current" (or the
- * config default on a fresh registry) activates one.
+ * Machine registry: the durable list of saved SSH machines. Pure functions
+ * over a file path so tests drive real files. Saved machines are STANDBY
+ * connections; which machine serves a workspace is decided by that
+ * workspace's anchor alone — the registry holds no "current" pointer.
  * @module dsh-remote-development/registry
  */
 
@@ -31,11 +31,9 @@ export interface Machine {
 /** Durable registry shape (version 1). */
 export interface RegistryData {
   version: 1
-  currentId: string | null
   machines: Machine[]
 }
 
-/** Registry file layout; `null` currentId is a deliberate "no active machine". */
 const REGISTRY_VERSION = 1
 
 /**
@@ -98,14 +96,13 @@ export function sanitizeMachine(raw: Partial<Machine>): Machine {
 export function loadRegistry(file: string): RegistryData {
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<RegistryData>
-    if (!raw || !Array.isArray(raw.machines)) return { version: REGISTRY_VERSION, currentId: null, machines: [] }
+    if (!raw || !Array.isArray(raw.machines)) return { version: REGISTRY_VERSION, machines: [] }
     const machines = raw.machines.map((m) => sanitizeMachine(m as Partial<Machine>))
-    const currentId = typeof raw.currentId === 'string' && machines.some((m) => m.id === raw.currentId)
-      ? raw.currentId
-      : null
-    return { version: REGISTRY_VERSION, currentId, machines }
+    // Registries written before the "current machine" concept was removed
+    // carry a currentId field; it is obsolete and simply dropped on load.
+    return { version: REGISTRY_VERSION, machines }
   } catch {
-    return { version: REGISTRY_VERSION, currentId: null, machines: [] }
+    return { version: REGISTRY_VERSION, machines: [] }
   }
 }
 
@@ -122,9 +119,7 @@ export function saveRegistry(file: string, data: RegistryData): void {
 }
 
 /**
- * Whether the registry file exists at all (a present file with `currentId:
- * null` means "explicitly no active machine" and must not fall back to the
- * config default).
+ * Whether the registry file exists at all.
  * @param file - registry file path.
  * @returns true when the file exists.
  */

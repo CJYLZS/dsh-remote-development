@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { RemoteWorld } from '../src/world.ts'
+import { RemoteWorld, unconfiguredMachineMessage } from '../src/world.ts'
 import { sanitizeMachine } from '../src/registry.ts'
 import type { Config } from '../src/config.ts'
 
@@ -88,18 +88,30 @@ test('machineForMeta resolves the registry record and rejects strangers', () => 
   }
 })
 
-test('a fresh registry adopts the config default; an explicit none stays inert', () => {
+test('a fresh registry registers the config machine as standby; reload keeps it once', () => {
   const root = tempDir()
   try {
     const config = baseConfig(root)
     config.host = 'cfg.example.com'
     config.username = 'dev'
     const world = new RemoteWorld(config)
-    assert.equal(world.currentMachine()?.host, 'cfg.example.com')
+    assert.deepEqual(world.listMachines().map((m) => m.host), ['cfg.example.com'])
     const second = new RemoteWorld(config)
-    second.setCurrent(null)
-    const third = new RemoteWorld(config)
-    assert.equal(third.currentMachine(), null)
+    assert.deepEqual(second.listMachines().map((m) => m.host), ['cfg.example.com'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('unconfiguredMachineMessage names the machine and the remedy', () => {
+  const root = tempDir()
+  try {
+    const world = worldWithAnchor(root, '/home/dev/myapp')
+    const anchor = world.anchors()[0]!
+    const message = unconfiguredMachineMessage(anchor)
+    assert.match(message, /dev@dev\.example\.com:22/)
+    assert.match(message, /no longer configured/)
+    assert.match(message, /re-add/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

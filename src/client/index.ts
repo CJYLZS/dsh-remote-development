@@ -47,7 +47,6 @@ export function apply(ctx: ClientContext): void {
       listMachines: api.listMachines,
       saveMachine: api.saveMachine,
       deleteMachine: api.deleteMachine,
-      setCurrentMachine: api.setCurrentMachine,
       testConnection: api.testConnection,
       t,
     }),

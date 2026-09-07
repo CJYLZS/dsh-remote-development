@@ -27,6 +27,7 @@ import type {
 import type { ClientChannel } from 'ssh2'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
+import { unconfiguredMachineMessage } from './world.ts'
 import { argvToRemoteCommand, shq } from './paths.ts'
 
 /** Tail-keeping byte buffer with whole-stream offset reads. */
@@ -294,7 +295,9 @@ export class RoutingSubprocessRuntime extends LocalSubprocessRuntime {
     const route = this.world.classifyHostPath(spec.cwd)
     if (route.kind !== 'remote') return super.spawn(spec)
     const machine = this.world.machineForAnchor(route.route.anchor)
-    if (!machine) return super.spawn(spec)
+    // Refuse instead of falling back: a local spawn would silently run the
+    // command on the wrong host.
+    if (!machine) throw new Error(unconfiguredMachineMessage(route.route.anchor))
     return new RemoteSpawnHandle(this.world, machine, spec)
   }
 

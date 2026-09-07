@@ -9,6 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { RemoteWorld } from './world.ts'
+import type { MachineRef } from './world.ts'
 import type { Machine } from './registry.ts'
 import { normalizeRemotePath } from './paths.ts'
 
@@ -111,14 +112,17 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
       : {}),
   })
 
-  const resolveRef = (body: Record<string, unknown>) => {
-    const id = String(body.machineId ?? body.id ?? '')
-    const ref = id ? world.machineById(id) : null
-    if (!ref) {
-      const current = world.currentMachine()
-      return current ? { source: 'registry' as const, machine: current } : null
-    }
-    return ref
+  // Every remote operation names its machine explicitly — there is no
+  // implicit default target. A missing or unknown machineId is an error,
+  // never a silent fallback to another machine.
+  const machineIdOf = (body: Record<string, unknown>): string => String(body.machineId ?? body.id ?? '')
+  const resolveRef = (body: Record<string, unknown>): MachineRef | null => {
+    const id = machineIdOf(body)
+    return id ? world.machineById(id) : null
+  }
+  const refError = (body: Record<string, unknown>): string => {
+    const id = machineIdOf(body)
+    return id ? `no saved machine matches machineId "${id}"` : 'machineId is required'
   }
 
   const routes = [
@@ -129,7 +133,6 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         if (req.method === 'GET') {
           return sendJson(res, 200, {
             machines: world.listMachines().map(publicMachine),
-            currentId: world.currentMachine()?.id ?? null,
           })
         }
         if (req.method === 'POST') {
@@ -155,23 +158,23 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
     },
     {
       kind: 'exact' as const,
-      path: `${ROUTE_PREFIX}/machines/current`,
-      handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
-        const body = await readJsonBody(req)
-        if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
-        const id = body.id === null ? null : String(body.id ?? '')
-        return sendJson(res, 200, { ok: world.setCurrent(id) })
-      },
-    },
-    {
-      kind: 'exact' as const,
       path: `${ROUTE_PREFIX}/test`,
       handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' })
         const body = await readJsonBody(req)
         if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
-        const ref = resolveRef(body) ?? world.ephemeralRef(machineFromBody(body))
+        const id = machineIdOf(body)
+        let ref: MachineRef
+        if (id) {
+          const saved = world.machineById(id)
+          if (!saved) return sendJson(res, 400, { ok: false, error: `no saved machine matches machineId "${id}"` })
+          ref = saved
+        } else if (String(body.host ?? '').trim()) {
+          // Unsaved draft: test the fields as given, saving nothing.
+          ref = world.ephemeralRef(machineFromBody(body))
+        } else {
+          return sendJson(res, 400, { ok: false, error: 'machineId is required' })
+        }
         try {
           const pool = world.poolFor(ref)
           await pool.exec('echo dsh-remote-development-ok', { timeoutMs: Math.min(world.config.connectTimeoutMs + world.config.commandTimeoutMs, 30000) })
@@ -189,7 +192,7 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         const body = await readJsonBody(req)
         if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
         const ref = resolveRef(body)
-        if (!ref) return sendJson(res, 400, { ok: false, error: 'no machine available' })
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
         try {
           const path = normalizeRemotePath(String(body.path ?? '~'))
           const expanded = path === '~' || path.startsWith('~/')
@@ -223,7 +226,7 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         const body = await readJsonBody(req)
         if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
         const ref = resolveRef(body)
-        if (!ref) return sendJson(res, 400, { ok: false, error: 'no machine available' })
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
         const parent = normalizeRemotePath(String(body.path ?? ''))
         const name = String(body.name ?? '').trim()
         if (!name || name.includes('/')) return sendJson(res, 400, { ok: false, error: 'a single folder name is required' })
@@ -245,7 +248,7 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
         const body = await readJsonBody(req)
         if (!body) return sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
         const ref = resolveRef(body)
-        if (!ref) return sendJson(res, 400, { ok: false, error: 'no machine available' })
+        if (!ref) return sendJson(res, 400, { ok: false, error: refError(body) })
         const remotePath = normalizeRemotePath(String(body.path ?? ''))
         if (!remotePath.startsWith('/')) return sendJson(res, 400, { ok: false, error: 'an absolute remote directory path is required' })
         try {
@@ -303,9 +306,7 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
       kind: 'exact' as const,
       path: `${ROUTE_PREFIX}/status`,
       handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
-        const current = world.currentMachine()
         return sendJson(res, 200, {
-          current: current ? publicMachine(current) : null,
           anchors: world.anchors().map((a) => ({ dir: a.dir, remotePath: a.remoteRoot })),
         })
       },
