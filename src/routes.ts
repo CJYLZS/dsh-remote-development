@@ -280,6 +280,27 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
     },
     {
       kind: 'exact' as const,
+      path: `${ROUTE_PREFIX}/picker`,
+      handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        // Which interaction the host's composed directory picker serves. Read
+        // lazily and duck-typed: the seam lives in a host-only package the
+        // plugin deliberately keeps out of its dependency graph, and an absent
+        // or not-yet-mounted seam answers "unknown" instead of failing.
+        type PickerFace = { capability?: () => { kind?: string } }
+        const picker = (ctx as unknown as { get(key: string): unknown })
+          .get('directoryPicker') as PickerFace | undefined
+        let kind = 'unknown'
+        try {
+          const probed = picker?.capability?.().kind
+          if (probed === 'native' || probed === 'browse') kind = probed
+        } catch {
+          // Seam present but not resolvable yet — same "unknown" answer.
+        }
+        return sendJson(res, 200, { kind })
+      },
+    },
+    {
+      kind: 'exact' as const,
       path: `${ROUTE_PREFIX}/status`,
       handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
         const current = world.currentMachine()

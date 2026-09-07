@@ -55,6 +55,9 @@ export function apply(ctx: ClientContext): void {
 
   const flowInjected = (): ({
     pickLocal: () => Promise<string | null>
+    listLocalDir: (path?: string) => Promise<{ path: string; home: string; crumbs: { name: string; path: string; hidden: boolean }[]; entries: { name: string; path: string; hidden: boolean }[]; truncated: boolean }>
+    createLocalDir: (path: string, name: string) => Promise<string>
+    pickerKind: () => Promise<{ kind: api.PickerKind }>
     listMachines: typeof api.listMachines
     listRemoteDir: typeof api.listRemoteDir
     createRemoteDir: typeof api.createRemoteDir
@@ -62,6 +65,11 @@ export function apply(ctx: ClientContext): void {
     t: typeof t
   }) => ({
     pickLocal: () => ctx.uiWorkspace.pickDirectory(),
+    // 本机 browse interaction: the host's own listing/creation primitives —
+    // the verbs a WSL/SSH/headless boot's composed picker actually serves.
+    listLocalDir: (path) => ctx.uiWorkspace.listDirectory(path),
+    createLocalDir: (path, name) => ctx.uiWorkspace.createDirectory(path, name),
+    pickerKind: api.pickerCapability,
     listMachines: api.listMachines,
     listRemoteDir: api.listRemoteDir,
     createRemoteDir: api.createRemoteDir,

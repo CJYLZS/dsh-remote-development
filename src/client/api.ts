@@ -88,3 +88,11 @@ export function createAnchor(machineId: string, path: string): Promise<{ ok: boo
 export function sessionRemote(sessionId: string): Promise<{ remote: boolean; remotePath?: string }> {
   return call('GET', `/session-remote?sessionId=${encodeURIComponent(sessionId)}`)
 }
+
+/** Which interaction the host's composed directory picker serves. */
+export type PickerKind = 'native' | 'browse' | 'unknown'
+
+/** Read the composed directory-picker capability from the host. */
+export function pickerCapability(): Promise<{ kind: PickerKind }> {
+  return call('GET', '/picker')
+}

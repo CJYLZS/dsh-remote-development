@@ -103,6 +103,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **SSH runs on pure JS, not native crypto.** The bundled `ssh2` never loads its optional native accelerators, so throughput on large SFTP transfers is lower than a natively-built `ssh2` would give. This matches what an unapproved install produced before, since pnpm blocked that build anyway.
 - **Not published to npm.** Install from GitHub (`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`) or from a local checkout path; the GitHub install uses the committed `lib/` build, while a local path links the directory so rebuilds apply on restart.
 - **The built-in directory-picker flow is shadowed, not replaced.** Both directory-flow registrations coexist at distinct priorities (this plugin uses -1, lowest renders); unloading this plugin hands the slot back to the built-in picker.
+- **The 本机 (local) tab follows the host's composed picker capability.** The host resolves its directory-picker backend once at boot: a WSL without zenity/kdialog, an SSH launch, a non-loopback bind, or a display-less Linux all compose the `browse` backend (only the `list`/`createDirectory` primitives — no OS chooser). The local tab branches on that resolution — `native` opens the OS chooser, `browse` drives the host's in-app web browser instead; before this, the tab hard-coded `pick`, which fails with `directory-picker/unavailable` on such boots.
 
 -----
 

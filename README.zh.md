@@ -103,6 +103,7 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 - **搜索依赖远程 ripgrep。** 远程机器上必须存在 `rg` 二进制（可用 `remoteRipgrep` 配置）；否则搜索工具在远程路径上失败。
 - **不发布 npm。** 从 GitHub 安装（`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`）或从本地检出路径安装；GitHub 安装使用已入库的 `lib/` 构建，本地路径则以链接方式指向目录，重新构建后重启即生效。
 - **内建目录选择流是被覆盖而非替换。** 两个目录流注册以不同优先级共存（本插件使用 -1，最低者优先渲染）；卸载本插件后槽位交还给内建选择器。
+- **「本机」页签跟随宿主组合的 picker 能力。** 宿主在启动时解析一次目录选择器后端：WSL 缺少 zenity/kdialog、经 SSH 启动、绑定非回环地址或无显示会话的 Linux 都会组合出 `browse` 后端（只有 `list`/`createDirectory` 原语，没有 OS 选择器）。插件的「本机」页签据此分流——`native` 打开 OS 选择器，`browse` 改用宿主的网页目录浏览器；在此之前的版本「本机」页签硬编码 `pick`，在这类启动下会以 `directory-picker/unavailable` 失败。
 
 -----
 
