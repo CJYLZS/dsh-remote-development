@@ -46,7 +46,7 @@ Restart the harness after installing.
 Three steps and nothing else:
 
 1. **Add a machine.** In the Web GUI's **dsh-remote-development** settings section, enter host, port, and username, choose password / private key / SSH agent authentication (optional jump proxy), and click test.
-2. **Pick a remote directory.** In the workspace directory flow (the hero "choose directory" dialog or the sidebar workspaces picker), open the **远程** tab, browse the machine's directories, and set one as the session workspace.
+2. **Pick a remote directory.** In the workspace directory flow (the hero "choose directory" dialog or the sidebar workspaces picker), open the **Remote** tab, browse the machine's directories, and set one as the session workspace.
 3. **Work as usual.** That is the whole setup. File tools, shell, bash, and search run through the same tool calls as before — only now they execute on the remote machine; the model's working directory is the remote path, so it needs no special instructions and gains no new tools. Anything outside the chosen directory keeps local behavior, so existing sessions are untouched.
 
 Under the hood, setting a remote workspace creates an **anchor** under `$DSH_HOME/remote-workspaces/<host>-<user>-<port>/<basename>` — a real local directory whose metadata records the remote coordinates. There is no "current machine" and no default target: the anchor alone decides where its session's tools execute. If that machine is later deleted, operations on the workspace fail with an explicit "machine is no longer configured" error instead of silently running elsewhere — re-add the machine to resume, or delete the workspace directory.
