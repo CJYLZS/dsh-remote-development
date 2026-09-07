@@ -8,7 +8,8 @@
 
 ## 目录
 
-- [使用本插件](#使用本插件)
+- [安装](#安装)
+- [使用](#使用)
 - [理解设计](#理解设计)
 - [配置](#配置)
 - [已知限制与延期工作](#已知限制与延期工作)
@@ -17,16 +18,16 @@
 
 -----
 
-<a id="使用本插件"></a>
-## 使用本插件
+<a id="安装"></a>
+## 安装
 
-直接从 GitHub 安装即可——`lib/` 构建产物已入库，无需构建，也无需任何 profile 配置：
+推荐直接从 GitHub 安装——`lib/` 构建产物已入库，一条命令即可，无需构建：
 
 ```sh
 dsh plugin add --profile web github:CJYLZS/dsh-remote-development
 ```
 
-若要基于本地检出开发插件，先构建再添加检出路径：
+开发模式则链接本地检出：
 
 ```sh
 cd dsh-remote-development
@@ -37,24 +38,18 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 `link:` 安装把 profile 指向检出目录，之后每次 `pnpm run build` 重启 harness 即生效，无需重新 add。
 
-### 为什么安装不需要批准构建脚本
+安装后重启 harness。
 
-`ssh2` 带一个探测可选原生加密绑定的 install 脚本，而 pnpm ≥ 10 默认拦截依赖的构建脚本——若它是普通依赖，首次 `dsh plugin add` 就会以 `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: cpu-features@…, ssh2@…` 失败。pnpm 只从 workspace 根读取构建许可，因此本包对自身的任何声明都无法授予它，而 profile 并不是本包的 workspace。
+<a id="使用"></a>
+## 使用
 
-所以 `ssh2` 不作为安装依赖存在：它在构建时被打进 `lib/index.js`，连同其纯 JS 依赖（`asn1`、`safer-buffer`、`tweetnacl`、`bcrypt-pbkdf`）。插件唯一的运行时依赖是 `@deepseek-ai/schemastery`，它没有构建脚本。整个过程不需要 C++ 工具链，profile 的 `pnpm-workspace.yaml` 也不会被改动。
+只需三步：
 
-两个可选原生加速件（`cpu-features` 与 `ssh2` 自带的绑定）在构建时被替换为桩，因此所有平台都走 `ssh2` 的纯 JS 加解密路径——这与未批准构建时本就会走的路径相同。`ssh2` 把两处 `require` 都包在 `try/catch` 里，这正是它自己的回退设计。维护代价见[第三方代码](#第三方代码)。
+1. **添加机器。** 在 Web GUI 的 **dsh-remote-development** 设置分区填入 host、port、用户名，选择密码 / 私钥 / SSH agent 认证（可选跳板机），点击测试连接。
+2. **选择远程目录。** 在工作区目录流（hero 的「选择目录」对话框或侧边栏工作区选择器）打开**远程**页签，浏览机器目录，把某个远程目录设为会话工作区。
+3. **照常工作。** 到此为止。文件工具、shell、bash、搜索仍以同样的调用方式执行，只是落在远程机器上；模型的工作目录就是远程路径，不需要任何额外说明，也不会多出任何新工具。所选目录之外的路径保持本地行为，既有会话不受影响。
 
-安装后重启 harness。Web GUI 中会出现：
-
-- **dsh-remote-development** 设置分区：添加机器（host、port、用户名；密码、私钥或 SSH agent 认证；可选跳板机）并测试连接；
-- 工作区目录流（hero 的"选择目录"对话框与侧边栏工作区选择器）中的**远程**标签页：列出机器、浏览远程目录、新建文件夹，并把远程目录设为会话工作区。
-
-设置远程工作区会在 `$DSH_HOME/remote-workspaces/<host>-<user>-<port>/<basename>` 下创建一个**锚点**——一个携带远程坐标元数据文件的真实本地目录。会话工作目录落在锚点上即路由到远程机器；其余路径保持本地行为，既有会话不受影响。
-
-**机器由工作区决定，没有别的途径。** 不存在「当前机器」或默认目标：保存的机器只是待命的连接记录，每个远程操作都显式指名机器（选择器对话框提交时选定「机器 + 路径」；JSON 路由必须携带 `machineId`，缺失一律返回 `400`）。锚点始终路由到其元数据记录的机器；若该机器随后被删除，工作区上的操作会以明确的「机器已失配（no longer configured）」错误失败，而不是悄悄换到别的机器或本地执行——重新添加机器即可恢复，或删除该工作区目录。
-
-会话位于锚点时，模型会通过一个 system-prompt 分区获知：工作区是远程的，常用工具在其中直接生效。
+其底层机制：设置远程工作区会在 `$DSH_HOME/remote-workspaces/<host>-<user>-<port>/<basename>` 下创建一个**锚点**——一个真实本地目录，元数据记录远程坐标。不存在「当前机器」或默认目标，锚点独自决定其会话工具的执行位置。若该机器随后被删除，工作区上的操作会以明确的「机器已失配（no longer configured）」错误失败，而不是悄悄换到别的机器执行——重新添加机器即可恢复，或删除该工作区目录。
 
 -----
 
@@ -101,9 +96,9 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 - **不支持持久终端会话。** 终端工具会返回明确的"not supported by dsh-remote-development"错误，而不是让 agent 自行尝试；远程命令请使用 bash 工具。
 - **远程会话不支持 `@` 文件引用。** 远程会话中输入 `@` 会给出单条明确的"暂不支持"候选，而不是静默失败；引用源接口已预留到后续阶段。
 - **没有镜像或同步层。** 锚点目录只保存元数据，不保存文件副本；每次读写都经 SSH，受 `maxFileBytes` 限制。
-- **SSH 走纯 JS 而非原生加密。** 打包的 `ssh2` 不会加载可选原生加速件，大文件 SFTP 传输的吞吐低于原生构建版本。这与之前未批准构建时的实际情况一致——那种情况下 pnpm 本就拦掉了该构建。
+- **SSH 走纯 JS 而非原生加密。** 打包的 `ssh2` 不会加载可选原生加速件，大文件 SFTP 传输的吞吐低于原生构建版本。
 - **搜索依赖远程 ripgrep。** 远程机器上必须存在 `rg` 二进制（可用 `remoteRipgrep` 配置）；否则搜索工具在远程路径上失败。
-- **不发布 npm。** 从 GitHub 安装（`dsh plugin add --profile web github:CJYLZS/dsh-remote-development`）或从本地检出路径安装；GitHub 安装使用已入库的 `lib/` 构建，本地路径则以链接方式指向目录，重新构建后重启即生效。
+- **不发布 npm。** 从 GitHub 或本地检出安装，见[安装](#安装)。
 - **内建目录选择流是被覆盖而非替换。** 两个目录流注册以不同优先级共存（本插件使用 -1，最低者优先渲染）；卸载本插件后槽位交还给内建选择器。
 - **「本机」页签跟随宿主组合的 picker 能力。** 宿主在启动时解析一次目录选择器后端：WSL 缺少 zenity/kdialog、经 SSH 启动、绑定非回环地址或无显示会话的 Linux 都会组合出 `browse` 后端（只有 `list`/`createDirectory` 原语，没有 OS 选择器）。插件的「本机」页签据此分流——`native` 打开 OS 选择器，`browse` 改用宿主的网页目录浏览器；在此之前的版本「本机」页签硬编码 `pick`，在这类启动下会以 `directory-picker/unavailable` 失败。
 - **删除机器后其工作区被有意搁置。** 锚点在机器删除后仍然存在，所有工具面对它都会以同样的「机器已失配」错误拒绝（fs、bash、subprocess，提示词的 `cwd` 变量回退为本地句柄），而不是换一台机器或在本机执行。
