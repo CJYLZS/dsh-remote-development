@@ -59,8 +59,9 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 三个路由 provider 替换同一服务的基座行，所有本地工具继续可用，只有传输层改变：
 
 - `RoutingFileSystem`（替换沙箱文件系统）——路径解析到远程根的读写、编辑、列目录经 SFTP 完成；其余调用经 `super()` 委托本地基座。
-- `RoutingSubprocessRuntime`（替换本地子进程运行时）——以锚点为 cwd 的 spawn 在远程主机上经 SSH exec 通道执行；搜索工具使用的打包 ripgrep 会被改写为远程 `rg` 二进制。
-- `RoutingBashExecutor`（替换沙箱 bash 执行器，仅 POSIX 宿主）——bash 脚本经远程 `bash -c` 执行；后台进程通过进程组 kill 协议拿到真实远程 PID。
+- `RoutingSubprocessRuntime`（替换本地子进程运行时）——以锚点为 cwd 的 spawn 在远程主机上经 SSH exec 通道执行；搜索工具使用的打包 ripgrep 会被改写为远程 `rg` 二进制。路由只看工作目录，所有宿主平台行为一致。
+- `RoutingBashExecutor` / `RoutingPwshExecutor`（替换沙箱 bash/pwsh 执行器）——工作目录在锚点下的命令经远程 `bash -c` 执行；后台进程通过进程组 kill 协议拿到真实远程 PID。宿主平台决定挂载哪个执行器——只有**本地回退**与平台相关（POSIX 用本地 bash，Windows 用本地 pwsh）；远程方言始终由远程主机的 POSIX shell 决定。
+- **按 agent 的工具可见性。** patch 同时挂载两套 shell 工具栈，并按会话安装作用域限制，隐藏该会话工作区不应使用的方言：远程会话只见 `bash` 工具（不见 `pwsh`），Windows 本机会话只见 `pwsh`（不见插件补入的 `bash`）。POSIX 本机会话两个世界都用 `bash`，与基础组合一致。
 - **每机器一条共享 SFTP 会话。** SFTP 协议在单一子系统通道上多路复用所有请求，全部文件操作共享一条会话，而不是每次调用开一条（并泄漏）通道——服务器对单连接的会话数有上限，耗尽后所有打开请求都以通道失败告终。
 
 **模型看不到锚点句柄。** harness 的系统提示会报告会话工作目录；远程会话下插件按 agent 覆盖该变量为远程路径，模型可见的 `cwd` 即命令真正运行的目录。作为兜底，命令文本中的锚点目录写法（绝对路径、`~`、`$HOME`、`${HOME}`）会在执行前改写为远程路径——仅限同机锚点，stdin 保持原样。本地会话不受影响。
@@ -93,7 +94,8 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 ## 已知限制与延期工作
 
 - **Windows 远程机延期支持。** 远程机器必须运行 POSIX shell；`uname` 探测会以明确错误拒绝 Windows 目标。适配预留到后续阶段。
-- **不支持持久终端会话。** 终端工具会返回明确的"not supported by dsh-remote-development"错误，而不是让 agent 自行尝试；远程命令请使用 bash 工具。
+- **Windows 本机支持远程 shell 路由。** Windows 宿主挂载基于 pwsh 的路由执行器：本地工作目录保持沙箱 pwsh 执行器，锚点工作目录跨到远程主机的 bash。模型在远程会话看到 `bash` 工具，本地会话看到 `pwsh` 工具。
+- **不支持持久终端会话。** 终端工具会返回明确的"not supported by dsh-remote-development"错误，而不是让 agent 自行尝试；远程命令请使用 bash 工具。持久 shell 工具仍仅限本地：指向远程工作区的持久工具会以同样错误拒绝。
 - **远程会话不支持 `@` 文件引用。** 远程会话中输入 `@` 会给出单条明确的"暂不支持"候选，而不是静默失败；引用源接口已预留到后续阶段。
 - **没有镜像或同步层。** 锚点目录只保存元数据，不保存文件副本；每次读写都经 SSH，受 `maxFileBytes` 限制。
 - **SSH 走纯 JS 而非原生加密。** 打包的 `ssh2` 不会加载可选原生加速件，大文件 SFTP 传输的吞吐低于原生构建版本。

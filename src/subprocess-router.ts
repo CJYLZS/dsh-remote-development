@@ -4,7 +4,9 @@
  * Remote argv runs over the SSH exec channel as a quoted command line (the
  * seam's "argv is never shell-interpreted" is preserved by quoting every
  * element); the packaged ripgrep is re-pointed at the remote `rg` so the grep
- * and glob tools keep parsing identical output.
+ * and glob tools keep parsing identical output. Routing keys on the workdir
+ * alone — the host platform only matters for the local fallback, which is the
+ * inherited runtime.
  *
  * Remote terminal sessions are refused with a clear model-facing error in v1:
  * SSH cannot provide the foreground-process-group facts the terminal contract
@@ -274,9 +276,10 @@ function buildRemoteCommand(argv: readonly string[], env: NodeJS.ProcessEnv | un
 }
 
 /**
- * The routing subprocess runtime. Construction registers `ctx.subprocess`; on
- * win32 hosts every call delegates (remote command routing is a POSIX-host
- * capability in v1), so the disabled base row never leaves the seam empty.
+ * The routing subprocess runtime. Construction registers `ctx.subprocess`;
+ * the workdir classification alone decides between the remote branch and the
+ * inherited local runtime, so routing behavior is identical on every host
+ * platform.
  */
 export class RoutingSubprocessRuntime extends LocalSubprocessRuntime {
   private readonly world: RemoteWorld
@@ -291,7 +294,6 @@ export class RoutingSubprocessRuntime extends LocalSubprocessRuntime {
   }
 
   override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
-    if (process.platform === 'win32') return super.spawn(spec)
     const route = this.world.classifyHostPath(spec.cwd)
     if (route.kind !== 'remote') return super.spawn(spec)
     const machine = this.world.machineForAnchor(route.route.anchor)
@@ -302,14 +304,12 @@ export class RoutingSubprocessRuntime extends LocalSubprocessRuntime {
   }
 
   override async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
-    if (process.platform !== 'win32') {
-      const route = this.world.classifyHostPath(spec.cwd)
-      if (route.kind === 'remote') {
-        throw new Error(
-          'remote terminal sessions are not supported by dsh-remote-development yet. '
-          + 'Use the bash tool to run commands on the remote host instead.',
-        )
-      }
+    const route = this.world.classifyHostPath(spec.cwd)
+    if (route.kind === 'remote') {
+      throw new Error(
+        'remote terminal sessions are not supported by dsh-remote-development yet. '
+        + 'Use the bash tool to run commands on the remote host instead.',
+      )
     }
     return super.spawnTerminal(spec)
   }

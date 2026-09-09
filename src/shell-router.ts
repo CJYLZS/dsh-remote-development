@@ -1,10 +1,18 @@
 /**
- * The routing `ctx.shell` executor: extends the sandboxed bash executor with a
- * remote branch for commands whose working directory sits under an anchor.
- * Remote commands bypass the local sandbox wrapper entirely — the remote host
- * is a different execution world — and run through `bash -c` over the SSH
- * exec channel with the anchor path mapped onto the remote root. Approval and
- * exit-status semantics stay with the unchanged bash tool.
+ * The routing `ctx.shell` executors: extend the host platform's sandboxed
+ * executor with a remote branch for commands whose working directory sits
+ * under an anchor. Remote commands bypass the local sandbox wrapper entirely —
+ * the remote host is a different execution world — and run through `bash -c`
+ * over the SSH exec channel with the anchor path mapped onto the remote root.
+ * Approval and exit-status semantics stay with the unchanged shell tools.
+ *
+ * One executor mounts per host platform, and the split is about the LOCAL
+ * fallback only: a Windows host has no local bash, so it mounts
+ * {@link RoutingPwshExecutor} (local workdirs keep the inherited pwsh
+ * executor, sandbox and settings intact) while POSIX hosts mount
+ * {@link RoutingBashExecutor}. Both route anchor workdirs to the remote
+ * host's POSIX shell — the remote platform decides the remote dialect, never
+ * the host platform.
  *
  * The sandbox facts reported for remote runs carry the requested mode with
  * `denied: false` and no enforcement claim: the local sandbox runner never
@@ -15,7 +23,9 @@
 import { Context } from '@deepseek-ai/cordis'
 import { homedir } from 'node:os'
 import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
+import { SandboxPwshExecutor } from '@deepseek-ai/dsh-pwsh-sandbox'
 import type { ShellExecSpec, ShellProcess, ShellProcessRead, ShellRunResult } from '@deepseek-ai/dsh-shell'
+import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type { CollectedOutput } from '@deepseek-ai/dsh-subprocess'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
@@ -60,17 +70,19 @@ export function rewriteAnchorSpellings(
   return out
 }
 
-/** The remote branch of the bash executor. */
-export class RoutingBashExecutor extends SandboxBashExecutor {
+/**
+ * The remote branch shared by both routing executors: workdir classification,
+ * remote script composition, and foreground/background execution over the SSH
+ * exec channel. Each host-platform executor owns its local fallback and
+ * delegates every anchor-routed command here.
+ */
+export class RemoteShellBranch {
   private readonly world: RemoteWorld
 
   /**
-   * @param ctx - plugin context.
-   * @param config - the inherited executor config (defaults).
    * @param world - the remote world coordinator.
    */
-  constructor(ctx: Context, config: ConstructorParameters<typeof SandboxBashExecutor>[1], world: RemoteWorld) {
-    super(ctx, config)
+  constructor(world: RemoteWorld) {
     this.world = world
   }
 
@@ -83,7 +95,7 @@ export class RoutingBashExecutor extends SandboxBashExecutor {
    * @param workdir - the resolved local workdir.
    * @returns the machine and remote cwd, or null for the local backend.
    */
-  private remoteCwdOf(workdir: string): { machine: MachineRef; remotePath: string } | null {
+  routeOf(workdir: string): { machine: MachineRef; remotePath: string } | null {
     const local = this.world.classifyHostPath(workdir)
     if (local.kind === 'remote') {
       const machine = this.world.machineForAnchor(local.route.anchor)
@@ -99,16 +111,61 @@ export class RoutingBashExecutor extends SandboxBashExecutor {
     return null
   }
 
-  override async run(spec: ShellExecSpec): Promise<ShellRunResult> {
-    const route = this.remoteCwdOf(spec.workdir)
-    if (!route) return super.run(spec)
-    return this.runRemote(spec, route)
+  /**
+   * Run one command on its remote machine.
+   * @param spec - the resolved shell spec.
+   * @param route - the machine and remote cwd for the workdir.
+   * @param sandboxMode - the executor's default sandbox mode, reported as the
+   *   remote run's mode when the spec carries no per-call policy.
+   * @returns the remote outcome with non-enforcing sandbox facts.
+   */
+  async run(
+    spec: ShellExecSpec,
+    route: { machine: MachineRef; remotePath: string },
+    sandboxMode: SandboxMode | undefined,
+  ): Promise<ShellRunResult> {
+    const pool = this.world.poolFor(route.machine)
+    const script = this.script(route, spec, [])
+    const command = `bash -c ${shq(script)}`
+    const result = await pool.exec(command, {
+      timeoutMs: spec.timeoutMs,
+      ...(spec.stdin !== undefined ? { stdin: spec.stdin } : {}),
+      ...(spec.signal !== undefined ? { signal: spec.signal } : {}),
+    })
+    if (result.stderr.includes(CD_FAIL_MARKER) && result.code === 125) {
+      throw new Error(`cannot use remote working directory ${route.remotePath}: ${result.stderr.replace(CD_FAIL_MARKER, '').trim()}`)
+    }
+    const stdout: CollectedOutput = {
+      text: result.stdout,
+      truncated: false,
+    }
+    const stderr: CollectedOutput = {
+      text: result.stderr,
+      truncated: false,
+    }
+    return {
+      exitCode: result.code,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      aborted: !result.timedOut && spec.signal?.aborted === true,
+      timeoutMs: spec.timeoutMs,
+      stdout,
+      stderr,
+      sandbox: { mode: spec.sandboxPolicy?.mode ?? sandboxMode ?? 'danger-full-access', denied: false },
+    }
   }
 
-  override start(spec: ShellExecSpec): ShellProcess {
-    const route = this.remoteCwdOf(spec.workdir)
-    if (!route) return super.start(spec)
-    return this.startRemote(spec, route)
+  /**
+   * Start one remote background process.
+   * @param spec - the resolved shell spec.
+   * @param route - the machine and remote cwd for the workdir.
+   * @returns the live remote process handle.
+   */
+  start(spec: ShellExecSpec, route: { machine: MachineRef; remotePath: string }): ShellProcess {
+    const pool = this.world.poolFor(route.machine)
+    const script = this.script(route, spec, [`printf '${PID_MARKER}%s\\n' "$$"`])
+    const command = `bash -c ${shq(script)}`
+    return new RemoteBackgroundProcess(this.world, route.machine, command, spec, pool.tunables.maxOutputChars)
   }
 
   /** Compose the remote script: cd guard, env exports, then the command. */
@@ -144,44 +201,63 @@ export class RoutingBashExecutor extends SandboxBashExecutor {
       .map(anchor => ({ dir: anchor.dir, remoteRoot: anchor.remoteRoot }))
     return rewriteAnchorSpellings(text, anchors, homedir())
   }
+}
 
-  private async runRemote(spec: ShellExecSpec, route: { machine: MachineRef; remotePath: string }): Promise<ShellRunResult> {
-    const pool = this.world.poolFor(route.machine)
-    const script = this.script(route, spec, [])
-    const command = `bash -c ${shq(script)}`
-    const result = await pool.exec(command, {
-      timeoutMs: spec.timeoutMs,
-      ...(spec.stdin !== undefined ? { stdin: spec.stdin } : {}),
-      ...(spec.signal !== undefined ? { signal: spec.signal } : {}),
-    })
-    if (result.stderr.includes(CD_FAIL_MARKER) && result.code === 125) {
-      throw new Error(`cannot use remote working directory ${route.remotePath}: ${result.stderr.replace(CD_FAIL_MARKER, '').trim()}`)
-    }
-    const stdout: CollectedOutput = {
-      text: result.stdout,
-      truncated: false,
-    }
-    const stderr: CollectedOutput = {
-      text: result.stderr,
-      truncated: false,
-    }
-    return {
-      exitCode: result.code,
-      signal: result.signal,
-      timedOut: result.timedOut,
-      aborted: !result.timedOut && spec.signal?.aborted === true,
-      timeoutMs: spec.timeoutMs,
-      stdout,
-      stderr,
-      sandbox: { mode: spec.sandboxPolicy?.mode ?? this.sandboxMode ?? 'danger-full-access', denied: false },
-    }
+/** The POSIX-host routing executor: local workdirs stay with local bash. */
+export class RoutingBashExecutor extends SandboxBashExecutor {
+  private readonly branch: RemoteShellBranch
+
+  /**
+   * @param ctx - plugin context.
+   * @param config - the inherited executor config (defaults).
+   * @param world - the remote world coordinator.
+   */
+  constructor(ctx: Context, config: ConstructorParameters<typeof SandboxBashExecutor>[1], world: RemoteWorld) {
+    super(ctx, config)
+    this.branch = new RemoteShellBranch(world)
   }
 
-  private startRemote(spec: ShellExecSpec, route: { machine: MachineRef; remotePath: string }): ShellProcess {
-    const pool = this.world.poolFor(route.machine)
-    const script = this.script(route, spec, [`printf '${PID_MARKER}%s\\n' "$$"`])
-    const command = `bash -c ${shq(script)}`
-    return new RemoteBackgroundProcess(this.world, route.machine, command, spec, pool.tunables.maxOutputChars)
+  override async run(spec: ShellExecSpec): Promise<ShellRunResult> {
+    const route = this.branch.routeOf(spec.workdir)
+    if (!route) return super.run(spec)
+    return this.branch.run(spec, route, this.sandboxMode)
+  }
+
+  override start(spec: ShellExecSpec): ShellProcess {
+    const route = this.branch.routeOf(spec.workdir)
+    if (!route) return super.start(spec)
+    return this.branch.start(spec, route)
+  }
+}
+
+/**
+ * The win32-host routing executor: local workdirs keep the inherited pwsh
+ * executor (confinement, encoding, and settings included); anchor workdirs
+ * cross to the remote host's bash.
+ */
+export class RoutingPwshExecutor extends SandboxPwshExecutor {
+  private readonly branch: RemoteShellBranch
+
+  /**
+   * @param ctx - plugin context.
+   * @param config - the inherited executor config (defaults).
+   * @param world - the remote world coordinator.
+   */
+  constructor(ctx: Context, config: ConstructorParameters<typeof SandboxPwshExecutor>[1], world: RemoteWorld) {
+    super(ctx, config)
+    this.branch = new RemoteShellBranch(world)
+  }
+
+  override async run(spec: ShellExecSpec): Promise<ShellRunResult> {
+    const route = this.branch.routeOf(spec.workdir)
+    if (!route) return super.run(spec)
+    return this.branch.run(spec, route, this.sandboxMode)
+  }
+
+  override start(spec: ShellExecSpec): ShellProcess {
+    const route = this.branch.routeOf(spec.workdir)
+    if (!route) return super.start(spec)
+    return this.branch.start(spec, route)
   }
 }
 

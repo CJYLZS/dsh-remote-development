@@ -52,6 +52,7 @@ export function registerPrompt(ctx: Context, world: RemoteWorld): void {
         '## Remote workspace',
         `This session's workspace is a remote directory: ${who}:${local.route.remotePath} ("${name}").`,
         'All file tools (read/write/edit/ls/grep/glob) and shell commands operate on that remote host directly.',
+        'Shell commands run through bash on the remote host; the pwsh tool does not apply to this workspace.',
         `File paths in tool calls are remote paths under ${local.route.remotePath}; the local workspace directory on this machine is only a handle and does not mirror the remote files.`,
       ].join('\n')
     },

@@ -1,27 +1,38 @@
 # dsh-remote-development bundle patch: inserts this plugin into a profile's layer stack.
 #
 # The plugin is ONE row: its apply() mounts every routing provider (ctx.fs /
-# ctx.subprocess / ctx.shell), the system-prompt section, and the web routes.
-# The three base execution-world rows are disabled so this package's routing
-# providers are the only providers of those services — patch semantics cannot
-# retarget a row's `name` (a name mismatch is skipped with a warning), so the
-# swap is disable + insert. Disable rows are TOP-LEVEL patch entries (they
-# locate the already-inserted base rows by id); only the new plugin row uses
-# `insert`.
+# ctx.subprocess / ctx.shell), the per-agent tool-visibility restrictions, the
+# system-prompt section, and the web routes. The base execution-world rows are
+# disabled so this package's routing providers are the only providers of those
+# services — patch semantics cannot retarget a row's `name` (a name mismatch
+# is skipped with a warning), so the swap is disable + insert. Disable rows
+# are TOP-LEVEL patch entries (they locate the already-inserted base rows by
+# id); only the new plugin row uses `insert`.
 #
-# Scope: profiles that stack dsh-base. `fs-sandbox`, `subprocess`, and
-# `bash-sandbox` exist in every dsh-base composition, so no disable row ever
-# targets a missing entry there. sdk-minimal (fs-local, no bash-sandbox) is
-# not a supported target: leaving its rows alone would duplicate-register
-# ctx.fs and fail boot loud — install this bundle on web/headless/sdk/acp.
+# Scope: profiles that stack dsh-base. `fs-sandbox`, `subprocess`,
+# `bash-sandbox`, and `pwsh-sandbox` exist in every dsh-base composition, so
+# no disable row ever targets a missing entry there. sdk-minimal (fs-local, no
+# sandbox executor rows) is not a supported target: leaving its rows alone
+# would duplicate-register ctx.fs and fail boot loud — install this bundle on
+# web/headless/sdk/acp.
 #
 # Platform notes:
-# - The bash router row replaces bash-sandbox on POSIX hosts only; on win32
-#   hosts pwsh-sandbox stays the ctx.shell provider, untouched.
-# - The subprocess router row stays enabled on every host platform: on win32
-#   it delegates every call to the inherited local runtime (remote routing is
-#   a POSIX-host capability in v1), so pwsh-sandbox keeps a usable
-#   ctx.subprocess and nothing crashes.
+# - Both sandbox executor rows are disabled on every host: the plugin's
+#   routing executor is the only ctx.shell provider. The host platform picks
+#   WHICH routing executor mounts (pwsh-based on win32, bash-based on POSIX) —
+#   only the local fallback is platform-bound; anchor workdirs always cross to
+#   the remote host's POSIX shell.
+# - `tool-bash` is force-enabled: the base bundle disables it on win32, but a
+#   remote session's model must see the bash tool there. The per-agent
+#   visibility layer hides whichever dialect the session's workspace must not
+#   use (pwsh on remote sessions, the plugin-added bash on win32 local
+#   sessions), so this row must not carry its own platform gate.
+# - `tool-pwsh` is deliberately absent: it keeps the base bundle's own gating
+#   (POSIX hosts never mount it), and a patch row would flip that gate the
+#   wrong way on POSIX.
+# - The subprocess router row stays enabled on every host platform: routing
+#   keys on the workdir alone, so the host platform only selects the local
+#   fallback runtime.
 # - The fs router row is platform-neutral (SFTP works from any host OS).
 - id: fs-sandbox
   disabled: true
@@ -29,6 +40,10 @@
   disabled: true
 - id: bash-sandbox
   disabled: true
+- id: pwsh-sandbox
+  disabled: true
+- id: tool-bash
+  disabled: false
 - insert:
     - id: dsh-remote-development
       name: 'dsh-remote-development'
