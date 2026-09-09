@@ -3,10 +3,15 @@
  * remote branch for spawn requests whose cwd sits under an anchor directory.
  * Remote argv runs over the SSH exec channel as a quoted command line (the
  * seam's "argv is never shell-interpreted" is preserved by quoting every
- * element); the packaged ripgrep is re-pointed at the remote `rg` so the grep
- * and glob tools keep parsing identical output. Routing keys on the workdir
- * alone — the host platform only matters for the local fallback, which is the
- * inherited runtime.
+ * element) behind a cd guard into the mapped remote path — the spawn's cwd
+ * travels as the remote working directory, not merely as a routing decision.
+ * The spawn's stdin dispositions travel faithfully too: `ignore` becomes a
+ * `/dev/null` redirect because a channel's stdin is a pipe, and programs that
+ * branch on pipe-ness (ripgrep with no search path) would silently change
+ * behavior at EOF. The packaged ripgrep is re-pointed at the remote `rg` so
+ * the grep and glob tools keep parsing identical output. Routing keys on the
+ * workdir alone — the host platform only matters for the local fallback,
+ * which is the inherited runtime.
  *
  * Remote terminal sessions are refused with a clear model-facing error in v1:
  * SSH cannot provide the foreground-process-group facts the terminal contract
@@ -113,9 +118,10 @@ class RemoteSpawnHandle implements SubprocessHandle {
    * immediately; `spawn()` returns this handle synchronously.
    * @param world - remote world (pool access).
    * @param machine - target machine.
+   * @param remotePath - the mapped remote cwd the spec's local cwd stands for.
    * @param spec - fully-specified spawn request.
    */
-  constructor(world: RemoteWorld, machine: MachineRef, spec: SubprocessSpawnSpec) {
+  constructor(world: RemoteWorld, machine: MachineRef, remotePath: string, spec: SubprocessSpawnSpec) {
     this.spec = spec
     let resolveDone: (outcome: SubprocessOutcome) => void
     let rejectDone: (err: Error) => void
@@ -127,12 +133,13 @@ class RemoteSpawnHandle implements SubprocessHandle {
       if (spec.signal.aborted) this.terminate()
       else spec.signal.addEventListener('abort', () => this.terminate(), { once: true })
     }
-    void this.open(world, machine, resolveDone!, rejectDone!)
+    void this.open(world, machine, remotePath, resolveDone!, rejectDone!)
   }
 
   private async open(
     world: RemoteWorld,
     machine: MachineRef,
+    remotePath: string,
     resolveDone: (outcome: SubprocessOutcome) => void,
     rejectDone: (err: Error) => void,
   ): Promise<void> {
@@ -141,8 +148,20 @@ class RemoteSpawnHandle implements SubprocessHandle {
       const client = await pool.connect()
       const remoteArgv = rewriteRipgrep(this.spec.argv, world.config.remoteRipgrep)
       const command = buildRemoteCommand(remoteArgv, this.spec.env)
+      // The exec channel hands the string to the remote login shell, so the
+      // cd guard is shell syntax by necessity; every argv element stays
+      // quoted, preserving the seam's "argv is never shell-interpreted"
+      // fact. A refused cwd fails loud with a self-descriptive stderr line
+      // and exit 125 — the tool layer classifies it, no marker needed.
+      // The local seam's stdin 'ignore' hands the child /dev/null — a
+      // character device, not a pipe — while a channel's stdin is a pipe,
+      // and a program that branches on pipe-ness (ripgrep with no path
+      // reads stdin instead of searching the directory) would silently
+      // change behavior at EOF. The redirect keeps the translation faithful.
+      const stdinRedirect = this.spec.stdio.stdin === 'ignore' ? ' < /dev/null' : ''
+      const guarded = `cd ${shq(remotePath)} || { echo ${shq(`cannot use remote working directory ${remotePath}`)} >&2; exit 125; }\n${command}${stdinRedirect}`
       await new Promise<void>((resolve, reject) => {
-        client.exec(command, {}, (err, channel) => {
+        client.exec(guarded, {}, (err, channel) => {
           if (err) {
             reject(new Error(`remote spawn failed: ${err.message}`))
             return
@@ -300,7 +319,7 @@ export class RoutingSubprocessRuntime extends LocalSubprocessRuntime {
     // Refuse instead of falling back: a local spawn would silently run the
     // command on the wrong host.
     if (!machine) throw new Error(unconfiguredMachineMessage(route.route.anchor))
-    return new RemoteSpawnHandle(this.world, machine, spec)
+    return new RemoteSpawnHandle(this.world, machine, route.route.remotePath, spec)
   }
 
   override async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {

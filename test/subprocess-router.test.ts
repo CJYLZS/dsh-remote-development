@@ -98,6 +98,32 @@ test('anchor spawns route to the remote machine on every host platform', async (
   assert.equal(outcome.exitCode, 0)
   assert.equal(commands.length, 1, 'the spawn must cross the SSH exec channel exactly once')
   assert.match(commands[0]!, /'rg' 'pattern'/, 'the argv must travel as a quoted remote command line')
+  assert.match(
+    commands[0]!,
+    new RegExp(`^cd '/home/dev/myapp/src'`),
+    'the remote command must start in the mapped workspace path, not the SSH default cwd',
+  )
+  assert.match(
+    commands[0]!,
+    /< \/dev\/null$/,
+    "stdin 'ignore' must translate to /dev/null, not a closed pipe: programs that branch on pipe-ness (ripgrep) change behavior at EOF",
+  )
+})
+
+test('stdin data travels verbatim without a /dev/null redirect', async () => {
+  const commands: string[] = []
+  const world = fakeWorld({
+    classify: () => ({ kind: 'remote', route: { anchor: ANCHOR, remotePath: '/home/dev/myapp' } }),
+    onCommand: (command) => commands.push(command),
+  })
+  const router = new RoutingSubprocessRuntime(new Context(), world)
+  const handle = router.spawn({
+    ...spawnSpec(ANCHOR.dir, ['cat']),
+    stdio: { stdin: { data: 'payload' }, stdout: { maxBytes: 1000, spill: { maxBytes: 1000 } }, stderr: { maxBytes: 1000, spill: { maxBytes: 1000 } } },
+  })
+  await handle.done
+  assert.equal(commands.length, 1)
+  assert.ok(!commands[0]!.includes('/dev/null'), 'genuine stdin data must not be redirected away')
 })
 
 test('local spawns delegate to the inherited runtime and never touch the pool', async () => {
