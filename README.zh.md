@@ -2,6 +2,12 @@
 
 [English](README.md) | 中文
 
+<img src="docs/img/preview_zh.png" alt="DeepSeek Harness Web GUI 中的 dsh-remote-development：远程工作区会话与右侧文档预览" width="100%">
+
+<p align="center">
+  <img src="docs/img/settings_zh.png" alt="远程开发设置：已保存的机器、认证方式与标记颜色" width="45%">
+</p>
+
 ## 摘要
 
 本插件为 DeepSeek Harness 提供轻量化远程开发：注册一台 SSH 机器，把远程目录选为会话工作区之后，agent 即可用与本地完全相同的工具（文件工具、shell、搜索）在该远程工作区上工作。插件不新增任何面向模型的工具，也不引入第三方 UI 插件：它把文件系统、子进程、bash 三个 provider 替换为路由版本，将本地工具调用翻译为经 SSH 的远程执行；同时在 Web GUI 中贡献一个设置分区和一个工作区目录选择对话框。

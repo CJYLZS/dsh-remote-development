@@ -2,6 +2,12 @@
 
 English | [中文](README.zh.md)
 
+<img src="docs/img/preview_en.png" alt="dsh-remote-development in the DeepSeek Harness web GUI: a remote workspace session with the document preview sidebar" width="100%">
+
+<p align="center">
+  <img src="docs/img/settings_en.png" alt="The remote development settings: saved machines, authentication, and marker color" width="45%">
+</p>
+
 ## Summary
 
 This plugin adds lightweight remote development to DeepSeek Harness: you register an SSH machine, pick a remote directory as the session's workspace, and the agent then works on that remote workspace with the SAME tools it uses locally — file tools, shell, and search. The plugin does not add any model-facing tool and no third-party UI plugin: it replaces the filesystem, subprocess, and bash providers with routing versions that translate local tool calls into remote execution over SSH, and it contributes one settings section plus one workspace directory-flow dialog in the Web GUI.
