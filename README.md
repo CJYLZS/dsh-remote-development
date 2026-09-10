@@ -6,8 +6,16 @@ English | [中文](README.zh.md)
 
 This plugin adds lightweight remote development to DeepSeek Harness: you register an SSH machine, pick a remote directory as the session's workspace, and the agent then works on that remote workspace with the SAME tools it uses locally — file tools, shell, and search. The plugin does not add any model-facing tool and no third-party UI plugin: it replaces the filesystem, subprocess, and bash providers with routing versions that translate local tool calls into remote execution over SSH, and it contributes one settings section plus one workspace directory-flow dialog in the Web GUI.
 
+<a id="highlights"></a>
+## Highlights
+
+- **Identical toolset.** Remote workspaces add no tool calls: the agent works with the exact same tools as a local workspace, and the plugin translates those calls to remote execution underneath.
+- **Zero remote dependencies.** The remote machine needs no extra server-side component — an SSH connection is all it takes.
+- **Web GUI integration.** Connection management covers password / private key / SSH agent, jump hosts, host-key TOFU, and connection testing; remote workspaces can be told apart by a custom per-machine color.
+
 ## Table of Contents
 
+- [Highlights](#highlights)
 - [Install](#install)
 - [Usage](#usage)
 - [Understand the design](#understand-the-design)
@@ -63,6 +71,7 @@ Three routing providers replace the base row of the same service, so every local
 - `RoutingBashExecutor` / `RoutingPwshExecutor` (replace the sandbox bash/pwsh executor) — commands with a workdir under an anchor run through `bash -c` on the remote host, and background processes get a real remote PID via a process-group kill protocol. The host platform picks which executor mounts — only the LOCAL fallback is platform-bound (local bash on POSIX, local pwsh on Windows); the remote host's POSIX shell always decides the remote dialect.
 - **Per-agent tool visibility.** The patch mounts both shell tool stacks, and a scoped restriction per session hides the dialect the session's workspace must not use: a remote session sees the `bash` tool (never `pwsh`), and a local session on a Windows host sees `pwsh` (never the plugin-added `bash`). POSIX local sessions keep `bash` for both worlds, matching the base composition.
 - **One shared SFTP session per machine.** The SFTP protocol multiplexes every request over one subsystem channel, so all file operations share a single session instead of opening (and leaking) a channel per call — servers cap sessions per connection, and exhausted caps answer every open with a channel failure.
+- **Remote workspaces are marked in the file tree.** The client recolors folder icons for remote workspaces: the host joins every anchor with its machine's marker color (a `Machine` field, editable in settings), and the client turns that list into attribute selectors over the tree's `data-files-*` hooks, injected as a stylesheet. One color per machine; leaving it empty falls back to the theme accent. The sidebar's workspace rows expose no data hooks, so their rules reach the row through its `aria-label`s (`:has()`), matching the workspace title an anchor workspace adopts from its directory basename.
 
 **The model never sees the anchor handle.** The harness's system prompt reports the session's working directory; for a remote session the plugin overrides that variable per agent with the remote path, so the model-visible `cwd` is the directory its commands actually run in. As a safety net, anchor-directory spellings (absolute, `~`, `$HOME`, `${HOME}`) in command text are rewritten to their remote paths before execution — same-machine anchors only, stdin left verbatim. Local sessions pass through unchanged.
 
@@ -98,6 +107,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 - **Persistent terminal sessions are not supported.** The terminal tool reports an explicit "not supported by dsh-remote-development" error instead of letting the agent try; use the bash tool for remote commands. Persistent shell tools remain local-only: a persistent tool pointed at a remote workspace refuses with the same error.
 - **`@` file references are not supported in remote sessions.** Typing `@` in a remote session yields a single explicit "not supported yet" candidate rather than a silent failure; the reference-source interface is reserved for a later phase.
 - **No mirror or sync layer.** Anchor directories hold metadata only, not file copies; every read and write crosses SSH, bounded by `maxFileBytes`.
+- **Tree marking depends on in-box `data-files-*` hooks.** The recoloring targets the file tree's data attributes, which are not a declared public contract; a dsh rename silently drops the coloring (purely presentational — nothing else breaks). Workspace-row markers additionally match by workspace title: renaming a workspace, or a dsh change to the sidebar's `aria-label` copy, drops the row marker while the file-tree marker keeps working.
 - **Search needs a remote ripgrep.** The `rg` binary must exist on the remote machine (configurable via `remoteRipgrep`); otherwise search tools fail on remote paths.
 - **SSH runs on pure JS, not native crypto.** The bundled `ssh2` never loads its optional native accelerators, so throughput on large SFTP transfers is lower than a natively-built `ssh2` would give.
 - **Not published to npm.** Install from GitHub or a local checkout — see [Install](#install).

@@ -32,6 +32,7 @@ function publicMachine(m: Machine): Record<string, unknown> {
     hostKeyMode: m.hostKeyMode,
     proxyHost: m.proxy?.host ?? '',
     workspace: m.workspace,
+    color: m.color,
   }
 }
 
@@ -80,6 +81,34 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(text)
 }
 
+/** One anchor with its machine join, as the tree marker consumes it. */
+export interface AnchorStatusRow {
+  dir: string
+  remotePath: string
+  /** The serving machine's id, or '' when no configured machine matches. */
+  machineId: string
+  /** The machine's marker color, or '' for the theme default. */
+  color: string
+}
+
+/**
+ * Join every anchor with its machine's marker color. Orphaned anchors (their
+ * machine is gone) keep their place in the list and simply lose the color.
+ * @param world - the remote world coordinator.
+ * @returns one row per anchor.
+ */
+export function anchorStatusRows(world: RemoteWorld): AnchorStatusRow[] {
+  return world.anchors().map((a) => {
+    const ref = world.machineForAnchor(a)
+    return {
+      dir: a.dir,
+      remotePath: a.remoteRoot,
+      machineId: ref?.machine.id ?? '',
+      color: ref?.machine.color ?? '',
+    }
+  })
+}
+
 /**
  * Register the JSON routes on the live web server.
  * @param ctx - plugin context (effects scope the disposers).
@@ -98,6 +127,7 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
     useAgent: body.useAgent === true,
     keyboardInteractive: body.keyboardInteractive === true,
     hostKeyMode: String(body.hostKeyMode ?? 'accept-new'),
+    color: String(body.color ?? ''),
     ...(typeof body.proxyHost === 'string' && body.proxyHost.trim()
       ? {
           proxy: {
@@ -306,9 +336,7 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
       kind: 'exact' as const,
       path: `${ROUTE_PREFIX}/status`,
       handler: async (_req: IncomingMessage, res: ServerResponse): Promise<void> => {
-        return sendJson(res, 200, {
-          anchors: world.anchors().map((a) => ({ dir: a.dir, remotePath: a.remoteRoot })),
-        })
+        return sendJson(res, 200, { anchors: anchorStatusRows(world) })
       },
     },
   ]

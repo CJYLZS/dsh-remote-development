@@ -21,6 +21,8 @@ export interface SettingsInjected {
   saveMachine: (machine: Record<string, unknown>) => Promise<{ machine: ClientMachine }>
   deleteMachine: (id: string) => Promise<{ ok: boolean }>
   testConnection: (machine: Record<string, unknown>) => Promise<{ ok: boolean; error?: string; platform?: string }>
+  /** Re-read the anchors and recolor the workspace tree's remote markers. */
+  refreshTreeMark: () => Promise<void>
   t: Translate
 }
 
@@ -38,6 +40,7 @@ interface Draft {
   proxyPort: string
   proxyUser: string
   keyboardInteractive: boolean
+  color: string
 }
 
 const EMPTY_DRAFT: Draft = {
@@ -53,6 +56,7 @@ const EMPTY_DRAFT: Draft = {
   proxyPort: '22',
   proxyUser: '',
   keyboardInteractive: false,
+  color: '',
 }
 
 function field(label: string, value: string, onChange: (v: string) => void, placeholder?: string, type?: string): ReactElement {
@@ -68,6 +72,9 @@ function field(label: string, value: string, onChange: (v: string) => void, plac
     }))
 }
 
+/** Preset marker colors offered in the palette (readable as icon colors on light and dark themes). */
+const COLOR_PRESETS = ['#3b82f6', '#22c55e', '#ef4444', '#f97316', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6']
+
 /**
  * The 远程开发 settings section.
  * @param props - owner conversation plus the injected machine API.
@@ -82,6 +89,10 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
   const [notice, setNotice] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ClientMachine | null>(null)
   const [deleteError, setDeleteError] = useState('')
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
+  // The palette belongs to one draft form; closing the form closes it too.
+  useEffect(() => { if (draft === null) setPaletteOpen(false) }, [draft])
 
   const refresh = useCallback((): void => {
     void props.listMachines().then((r) => {
@@ -109,10 +120,13 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
       proxyHost: draft.proxyHost.trim(),
       proxyPort: Number(draft.proxyPort) || 22,
       proxyUser: draft.proxyUser.trim(),
+      color: draft.color.trim(),
     }).then(() => {
       setDraft(null)
       setBusy(false)
       refresh()
+      // A color change re-marks every workspace the machine serves.
+      void props.refreshTreeMark()
     }).catch((err: Error) => {
       setError(err.message)
       setBusy(false)
@@ -140,6 +154,9 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
       setBusy(false)
       setDeleteTarget(null)
       refresh()
+      // The surviving anchors lose their machine join and fall back to the
+      // default marker color.
+      void props.refreshTreeMark()
     }).catch((err: Error) => {
       setBusy(false)
       setDeleteError(err.message)
@@ -162,6 +179,10 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
         : machines.map((m) => createElement('div', { key: m.id, className: 'rdv-card' },
             createElement('div', { className: 'rdv-cardMain' },
               createElement('div', { className: 'rdv-cardName' },
+                m.color !== '' && createElement('span', {
+                  'aria-hidden': true,
+                  style: { width: 10, height: 10, borderRadius: 5, background: m.color, flex: 'none' },
+                }),
                 createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, m.name),
               ),
               createElement('div', { className: 'rdv-cardHost' }, `${m.username}@${m.host}:${m.port}`),
@@ -184,6 +205,7 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
                   proxyPort: '22',
                   proxyUser: '',
                   keyboardInteractive: m.keyboardInteractive,
+                  color: m.color,
                 }),
               }, t('settings.edit')),
               createElement(Button, {
@@ -226,6 +248,42 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
           draft.privateKeyPath,
           (v) => setDraft({ ...draft, privateKeyPath: v }),
           '~/.ssh/id_ed25519',
+        ),
+      ),
+      createElement('div', { className: 'rdv-row' },
+        createElement('div', { className: 'rdv-field', style: { position: 'relative' } },
+          createElement('span', { className: 'rdv-label' }, t('settings.color')),
+          createElement('button', {
+            type: 'button',
+            className: 'rdv-colorTrigger',
+            onClick: () => setPaletteOpen(!paletteOpen),
+          },
+            draft.color !== '' && createElement('span', { className: 'rdv-colorDot', style: { background: draft.color } }),
+            createElement('span', null, draft.color === '' ? t('settings.colorDefault') : draft.color),
+          ),
+          paletteOpen && draft !== null && createElement(Fragment, null,
+            createElement('div', { className: 'rdv-paletteBackdrop', onClick: () => setPaletteOpen(false) }),
+            createElement('div', { className: 'rdv-palette', role: 'listbox', 'aria-label': t('settings.color') },
+              createElement('button', {
+                type: 'button',
+                role: 'option',
+                'aria-selected': draft.color === '',
+                className: 'rdv-swatch rdv-swatchDefault' + (draft.color === '' ? ' rdv-swatchActive' : ''),
+                title: t('settings.colorDefault'),
+                onClick: () => { setDraft({ ...draft, color: '' }); setPaletteOpen(false) },
+              }),
+              COLOR_PRESETS.map((c) => createElement('button', {
+                key: c,
+                type: 'button',
+                role: 'option',
+                'aria-selected': draft.color.toLowerCase() === c,
+                className: 'rdv-swatch' + (draft.color.toLowerCase() === c ? ' rdv-swatchActive' : ''),
+                style: { background: c },
+                title: c,
+                onClick: () => { setDraft({ ...draft, color: c }); setPaletteOpen(false) },
+              })),
+            ),
+          ),
         ),
       ),
       createElement('details', { className: 'rdv-field' },

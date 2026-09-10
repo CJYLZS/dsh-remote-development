@@ -19,6 +19,8 @@ export interface ClientMachine {
   hostKeyMode: string
   proxyHost: string
   workspace: string
+  /** Folder-icon color marking this machine's workspaces ('' = theme default). */
+  color: string
 }
 
 /** One remote directory row in the picker. */
@@ -82,6 +84,19 @@ export function createAnchor(machineId: string, path: string): Promise<{ ok: boo
 /** Whether one session's workspace is remote (and its remote root). */
 export function sessionRemote(sessionId: string): Promise<{ remote: boolean; remotePath?: string }> {
   return call('GET', `/session-remote?sessionId=${encodeURIComponent(sessionId)}`)
+}
+
+/** One remote workspace anchor with its machine join (machineId/color '' = unjoined). */
+export interface AnchorStatus {
+  dir: string
+  remotePath: string
+  machineId: string
+  color: string
+}
+
+/** List every remote workspace anchor with its machine's marker color. */
+export function anchorStatus(): Promise<{ anchors: AnchorStatus[] }> {
+  return call('GET', '/status')
 }
 
 /** Which interaction the host's composed directory picker serves. */

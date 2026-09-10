@@ -49,6 +49,8 @@ export interface FlowInjected {
   listRemoteDir: typeof api.listRemoteDir
   createRemoteDir: typeof api.createRemoteDir
   createAnchor: typeof api.createAnchor
+  /** Re-read the anchors and recolor the workspace tree's remote markers. */
+  refreshTreeMark: () => Promise<void>
   t: Translate
 }
 
@@ -186,8 +188,11 @@ export function RemoteFlow(props: DirectoryFlowOwnerProps & FlowInjected): React
     setError('')
     void props.createAnchor(machineId, path).then((r) => {
       setCreating(false)
-      if (r.ok) onPicked(r.anchorPath)
-      else setError(r.error ?? '')
+      if (r.ok) {
+        // The new anchor must be marked in the tree the moment it lands.
+        void props.refreshTreeMark()
+        onPicked(r.anchorPath)
+      } else setError(r.error ?? '')
     }).catch((err: Error) => {
       setCreating(false)
       setError(err.message)

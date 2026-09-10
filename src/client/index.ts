@@ -18,6 +18,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import * as api from './api.ts'
 import { DICTIONARIES, NS } from './locales.ts'
 import { injectStyles } from './styles.ts'
+import { startTreeMark, refreshTreeMark } from './tree-mark.ts'
 import { RemoteFlow } from './flow.tsx'
 import { MachinesSection } from './settings.tsx'
 import { registerReferenceSource } from './reference.ts'
@@ -31,6 +32,7 @@ export const inject = ['slots', 'uiWorkspace', 'locale', 'inputTriggers']
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => injectStyles(), 'dsh-remote-development: stylesheet')
+  ctx.effect(() => startTreeMark(), 'dsh-remote-development: tree marker')
   ctx.effect(() => {
     const disposers = DICTIONARIES.map(([locale, dict]) => ctx.locale.register(NS, locale, dict))
     return () => { for (const dispose of disposers) dispose() }
@@ -48,6 +50,7 @@ export function apply(ctx: ClientContext): void {
       saveMachine: api.saveMachine,
       deleteMachine: api.deleteMachine,
       testConnection: api.testConnection,
+      refreshTreeMark: () => refreshTreeMark(),
       t,
     }),
   }, MachinesSection))
@@ -61,6 +64,7 @@ export function apply(ctx: ClientContext): void {
     listRemoteDir: typeof api.listRemoteDir
     createRemoteDir: typeof api.createRemoteDir
     createAnchor: typeof api.createAnchor
+    refreshTreeMark: () => Promise<void>
     t: typeof t
   }) => ({
     pickLocal: () => ctx.uiWorkspace.pickDirectory(),
@@ -73,6 +77,7 @@ export function apply(ctx: ClientContext): void {
     listRemoteDir: api.listRemoteDir,
     createRemoteDir: api.createRemoteDir,
     createAnchor: api.createAnchor,
+    refreshTreeMark: () => refreshTreeMark(),
     t,
   })
   // Priority -1 shadows the built-in directory-picker surface (browse/native

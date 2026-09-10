@@ -23,6 +23,13 @@ test('sanitizeMachine rejects an unknown host-key mode', () => {
   assert.equal(m.hostKeyMode, 'accept-new')
 })
 
+test('sanitizeMachine keeps a safe marker color and drops everything else', () => {
+  assert.equal(sanitizeMachine({ host: 'h', color: ' #22C55E ' }).color, '#22C55E')
+  assert.equal(sanitizeMachine({ host: 'h', color: 'emerald' }).color, 'emerald')
+  assert.equal(sanitizeMachine({ host: 'h', color: 'red; } body {' }).color, '')
+  assert.equal(sanitizeMachine({ host: 'h' }).color, '')
+})
+
 test('loadRegistry returns a fresh registry for a missing file', () => {
   const dir = tempDir()
   try {

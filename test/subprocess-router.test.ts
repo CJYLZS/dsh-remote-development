@@ -19,7 +19,7 @@ const MACHINE: MachineRef = {
   source: 'registry',
   machine: {
     id: 'm1', name: 'dev', host: 'dev.example.com', port: 22, username: 'dev',
-    password: '', privateKeyPath: '', passphrase: '', useAgent: false, keyboardInteractive: false, hostKeyMode: 'accept-new', workspace: '',
+    password: '', privateKeyPath: '', passphrase: '', useAgent: false, keyboardInteractive: false, hostKeyMode: 'accept-new', workspace: '', color: '',
   },
 }
 

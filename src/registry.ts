@@ -26,6 +26,8 @@ export interface Machine {
   hostKeyMode: string
   workspace: string
   recentWorkspaces?: string[]
+  /** Folder-icon color marking this machine's workspaces in the file tree ('' = theme default). */
+  color: string
 }
 
 /** Durable registry shape (version 1). */
@@ -56,6 +58,10 @@ export function sanitizeMachine(raw: Partial<Machine>): Machine {
   const host = String(raw.host ?? '').trim()
   const port = Number(raw.port) > 0 ? Math.floor(Number(raw.port)) : 22
   const username = String(raw.username ?? '').trim()
+  // A color reaches an interpolated stylesheet, so only a hex literal or a CSS
+  // named color may pass; anything else (semicolons, braces, spaces) is dropped
+  // rather than escaped — the empty string simply means "theme default".
+  const color = String(raw.color ?? '').trim()
   const machine: Machine = {
     id: String(raw.id ?? '') || machineId(host, port, username),
     name: String(raw.name ?? '').trim() || host,
@@ -71,6 +77,7 @@ export function sanitizeMachine(raw: Partial<Machine>): Machine {
       ? String(raw.hostKeyMode)
       : 'accept-new',
     workspace: String(raw.workspace ?? '').trim(),
+    color: /^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/.test(color) ? color : '',
   }
   if (raw.proxy && String(raw.proxy.host ?? '').trim()) {
     machine.proxy = {
