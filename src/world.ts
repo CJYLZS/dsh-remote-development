@@ -16,6 +16,7 @@ import type { PoolTarget, PoolTunables } from './pool.ts'
 import { ANCHOR_META_FILE, createAnchorDir, matchRemotePath, scanAnchors } from './anchors.ts'
 import type { AnchorInfo, AnchorMeta } from './anchors.ts'
 import { loadRegistry, machineId, registryExists, saveRegistry, sanitizeMachine } from './registry.ts'
+import type { MachineInput } from './registry.ts'
 import type { Machine, RegistryData } from './registry.ts'
 import type { Config } from './config.ts'
 import { normalizeRemotePath } from './paths.ts'
@@ -97,17 +98,33 @@ export class RemoteWorld {
   }
 
   /**
-   * Add or update a machine by identity; returns the stored record.
-   * @param raw - machine fields from the UI or config.
+   * Add or update a machine by identity; returns the stored record. On an
+   * update, absent secrets (`undefined` password, passphrase, or proxy
+   * password) keep the stored values: the public machine wire withholds
+   * secrets, so an edit that leaves them out is a keep, not a clear. An
+   * explicit string sets or clears.
+   * @param raw - machine fields from the UI or config; secrets may be absent.
    * @returns the sanitized stored machine.
    */
-  upsertMachine(raw: Partial<Machine>): Machine {
+  upsertMachine(raw: MachineInput): Machine {
     const machine = sanitizeMachine(raw)
-    const index = this.registry.machines.findIndex((m) => m.id === machine.id)
-    if (index >= 0) this.registry.machines[index] = machine
-    else this.registry.machines.push(machine)
+    const stored = this.registry.machines.find((m) => m.id === machine.id)
+    if (stored === undefined) {
+      this.registry.machines.push(machine)
+      saveRegistry(this.registryFile, this.registry)
+      return machine
+    }
+    const merged: Machine = {
+      ...machine,
+      password: raw.password ?? stored.password,
+      passphrase: raw.passphrase ?? stored.passphrase,
+    }
+    if (machine.proxy) {
+      merged.proxy = { ...machine.proxy, password: raw.proxy?.password ?? stored.proxy?.password ?? '' }
+    }
+    this.registry.machines[this.registry.machines.indexOf(stored)] = merged
     saveRegistry(this.registryFile, this.registry)
-    return machine
+    return merged
   }
 
   /**
@@ -186,7 +203,7 @@ export class RemoteWorld {
    * @param raw - partial machine fields.
    * @returns the ephemeral machine reference.
    */
-  ephemeralRef(raw: Partial<Machine>): MachineRef {
+  ephemeralRef(raw: MachineInput): MachineRef {
     return { source: 'config', machine: sanitizeMachine(raw) }
   }
 

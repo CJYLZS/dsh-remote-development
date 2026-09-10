@@ -35,6 +35,8 @@ interface Draft {
   username: string
   auth: 'password' | 'key' | 'agent'
   password: string
+  /** Whether the machine being edited has a stored password (the wire never echoes one). */
+  hasPassword: boolean
   privateKeyPath: string
   proxyHost: string
   proxyPort: string
@@ -51,6 +53,7 @@ const EMPTY_DRAFT: Draft = {
   username: 'root',
   auth: 'password',
   password: '',
+  hasPassword: false,
   privateKeyPath: '',
   proxyHost: '',
   proxyPort: '22',
@@ -113,7 +116,9 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
       host: draft.host.trim(),
       port: Number(draft.port) || 22,
       username: draft.username.trim(),
-      password: draft.auth === 'password' ? draft.password : '',
+      // An untouched stored password travels as absent: the server keeps the
+      // stored secret, since the wire never echoes one back.
+      password: draft.auth === 'password' ? (draft.password === '' && draft.hasPassword ? undefined : draft.password) : '',
       privateKeyPath: draft.auth === 'key' ? draft.privateKeyPath.trim() : '',
       useAgent: draft.auth === 'agent',
       keyboardInteractive: draft.keyboardInteractive,
@@ -200,6 +205,7 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
                   username: m.username,
                   auth: m.hasPassword ? 'password' : (m.privateKeyPath ? 'key' : 'agent'),
                   password: '',
+                  hasPassword: m.hasPassword,
                   privateKeyPath: m.privateKeyPath,
                   proxyHost: m.proxyHost,
                   proxyPort: '22',
@@ -240,7 +246,7 @@ export function MachinesSection(props: SettingsSectionOwnerProps & SettingsInjec
           t('settings.password'),
           draft.password,
           (v) => setDraft({ ...draft, password: v }),
-          draft.id && !draft.password ? t('settings.passwordKeep') : '',
+          draft.id && draft.hasPassword && !draft.password ? t('settings.passwordKeep') : '',
           'password',
         ),
         draft.auth === 'key' && field(

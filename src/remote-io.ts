@@ -9,7 +9,7 @@
  * @module dsh-remote-development/remote-io
  */
 
-import type { SFTPWrapper, Stats } from 'ssh2'
+import type { FileEntryWithStats, SFTPWrapper, Stats } from 'ssh2'
 import { FsError, FsVersion } from '@deepseek-ai/dsh-fs'
 import type { FsEditRequest, FsInfo, FsPathInfo, FsWriteIntent } from '@deepseek-ai/dsh-fs'
 import { remoteDirname } from './paths.ts'
@@ -165,14 +165,14 @@ export async function listRemoteDir(
   signal: AbortSignal | undefined,
   timeoutMs: number,
 ): Promise<{ name: string; type: FsInfo['type']; size?: number; version?: FsVersion }[]> {
-  const entries = await sftpCall<Array<{ name: string; attrs: Stats & { isSymbolicLink(): boolean } }>>(
+  const entries = await sftpCall<FileEntryWithStats[]>(
     'readdir',
     signal,
     timeoutMs,
     (cb) => sftp.readdir(dir, cb as never),
   )
   return entries.map((e) => ({
-    name: e.name,
+    name: e.filename,
     type: typeOf(e.attrs, e.attrs.isSymbolicLink()) as FsInfo['type'],
     ...(e.attrs.isFile() ? { size: e.attrs.size } : {}),
     version: versionOf(e.attrs),
@@ -195,6 +195,47 @@ export async function readRemoteBytes(sftp: SFTPWrapper, p: string, signal: Abor
     throw new FsError(`"${p}" is ${stats.size} bytes, above the ${maxBytes}-byte read cap`, 'FS_TOO_LARGE')
   }
   return sftpCall<Buffer>('readFile', signal, timeoutMs, (cb) => sftp.readFile(p, cb as never))
+}
+
+/**
+ * Read one byte window of a remote file. The window is the bound, not the
+ * file: only the requested range transfers, the result truncates at the
+ * file's end, and an offset past the end yields nothing. No whole-file cap
+ * applies — the Host sizes the window before calling.
+ * @param sftp - the SFTP channel.
+ * @param p - remote path.
+ * @param range - `offset`, the 0-based first byte, and `length`, the largest byte count.
+ * @param signal - abort hook.
+ * @param timeoutMs - deadline for the whole window read.
+ * @returns the window's bytes, at most `length` long.
+ */
+export async function readRemoteByteWindow(
+  sftp: SFTPWrapper,
+  p: string,
+  range: { offset: number; length: number },
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<Uint8Array> {
+  if (range.length === 0) return new Uint8Array(0)
+  if (signal?.aborted) throw new FsError('remote file read aborted', 'FS_ABORTED')
+  const stream = sftp.createReadStream(p, { start: range.offset, end: range.offset + range.length - 1, autoClose: true })
+  const chunks: Buffer[] = []
+  const timer = setTimeout(() => stream.destroy(new SftpTimeoutError('read window')), timeoutMs)
+  const offAbort = attachAbort(signal, () => stream.destroy(new FsError('remote file read aborted', 'FS_ABORTED')))
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      chunks.push(chunk)
+    }
+  } catch (err) {
+    // Our own refusals keep their codes; server errors map onto the taxonomy.
+    if (err instanceof FsError || err instanceof SftpTimeoutError) throw err
+    throw mapSftpError(err as Error, 'read window')
+  } finally {
+    clearTimeout(timer)
+    offAbort()
+    stream.destroy()
+  }
+  return new Uint8Array(Buffer.concat(chunks))
 }
 
 /**

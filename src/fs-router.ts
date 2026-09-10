@@ -23,7 +23,7 @@ import type { SFTPWrapper } from 'ssh2'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
 import { unconfiguredMachineMessage } from './world.ts'
-import { listRemoteDir, lstatPath, readRemoteBytes, readRemoteText, statPath, streamRemoteText, editRemoteText, writeRemoteText } from './remote-io.ts'
+import { listRemoteDir, lstatPath, readRemoteBytes, readRemoteByteWindow, readRemoteText, statPath, streamRemoteText, editRemoteText, writeRemoteText } from './remote-io.ts'
 import { relUnder } from './paths.ts'
 
 /** targetKey namespace marker for remote targets (opaque to consumers). */
@@ -197,6 +197,14 @@ export class RoutingFileSystem extends SandboxedFileSystem {
     const machine = this.world.machineById(remote.machineId)
     if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
     return readRemoteBytes(await this.sftpFor(machine), remote.remotePath, signal, this.opTimeoutMs, maxBytes)
+  }
+
+  override async readByteRange(target: FsTarget, range: { offset: number; length: number }, signal?: AbortSignal): Promise<Uint8Array> {
+    const remote = RoutingFileSystem.parseKey(target)
+    if (remote === null) return super.readByteRange(target, range, signal)
+    const machine = this.world.machineById(remote.machineId)
+    if (!machine) throw RoutingFileSystem.unconfiguredTarget(target.displayPath, remote.machineId)
+    return readRemoteByteWindow(await this.sftpFor(machine), remote.remotePath, range, signal, this.opTimeoutMs)
   }
 
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {

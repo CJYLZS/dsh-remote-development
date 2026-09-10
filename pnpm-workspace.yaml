@@ -16,5 +16,10 @@ allowBuilds:
   node-pty: true
   ssh2: false
 
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-fs-local@0.1.5-alpha.2'
+  - '@deepseek-ai/dsh-fs-sandbox@0.1.5-alpha.2'
+  - '@deepseek-ai/dsh-fs@0.1.5-alpha.2'
+
 # Keep the store inside the project (no writes outside the plugin directory).
 storeDir: .pnpm-store

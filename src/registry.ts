@@ -50,11 +50,22 @@ export function machineId(host: string, port: number, username: string): string 
 }
 
 /**
+ * Machine fields arriving from untrusted input. Secret fields (`password`,
+ * `passphrase`, `proxy.password`) may be absent: on an update, absence keeps
+ * the stored value — the public machine wire withholds secrets, so an edit
+ * that leaves them out is a keep, not a clear — while an explicit string
+ * (empty included) sets or clears.
+ */
+export type MachineInput = {
+  [K in Exclude<keyof Machine, 'proxy'>]?: Machine[K] | undefined
+} & { proxy?: Partial<ProxyConfig> }
+
+/**
  * Fill defaults and drop whitespace on one machine record from untrusted input.
  * @param raw - partial machine fields (e.g. a UI payload or config row).
  * @returns the sanitized record with an id.
  */
-export function sanitizeMachine(raw: Partial<Machine>): Machine {
+export function sanitizeMachine(raw: MachineInput): Machine {
   const host = String(raw.host ?? '').trim()
   const port = Number(raw.port) > 0 ? Math.floor(Number(raw.port)) : 22
   const username = String(raw.username ?? '').trim()

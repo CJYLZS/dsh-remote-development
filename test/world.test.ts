@@ -116,3 +116,52 @@ test('unconfiguredMachineMessage names the machine and the remedy', () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('upsertMachine keeps stored secrets an omitted edit and clears explicit empties', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    const saved = world.upsertMachine({ name: 'a', host: 'h1', port: 22, username: 'u', password: 'secret', passphrase: 'pp' })
+    assert.equal(saved.password, 'secret')
+
+    // The public wire withholds secrets, so an edit that omits them keeps
+    // the stored values.
+    const edited = world.upsertMachine({
+      id: saved.id, name: 'a', host: 'h1', port: 22, username: 'u',
+      password: undefined, passphrase: undefined, color: '#22c55e',
+    })
+    assert.equal(edited.password, 'secret')
+    assert.equal(edited.passphrase, 'pp')
+    assert.equal(edited.name, 'a')
+    assert.equal(edited.color, '#22c55e')
+
+    // A reload from disk preserves the kept secret.
+    const reloaded = new RemoteWorld(baseConfig(root))
+    assert.equal(reloaded.machineById(saved.id)?.machine.password, 'secret')
+
+    // An explicit empty string is a clear, not a keep.
+    const cleared = world.upsertMachine({ id: saved.id, host: 'h1', port: 22, username: 'u', password: '' })
+    assert.equal(cleared.password, '')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('upsertMachine keeps a proxy password the edit omits', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    const proxied = world.upsertMachine({
+      name: 'p', host: 'h2', port: 22, username: 'u',
+      proxy: { host: 'bastion', port: 22, username: 'b', password: 'bp' },
+    })
+    const edited = world.upsertMachine({
+      id: proxied.id, host: 'h2', port: 22, username: 'u',
+      proxy: { host: 'bastion', port: 22, username: 'b' },
+    })
+    assert.equal(edited.proxy?.host, 'bastion')
+    assert.equal(edited.proxy?.password, 'bp')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

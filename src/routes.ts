@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
-import type { Machine } from './registry.ts'
+import type { Machine, MachineInput } from './registry.ts'
 import { normalizeRemotePath } from './paths.ts'
 
 const ROUTE_PREFIX = '/dsh-remote-development'
@@ -110,20 +110,23 @@ export function anchorStatusRows(world: RemoteWorld): AnchorStatusRow[] {
 }
 
 /**
- * Register the JSON routes on the live web server.
- * @param ctx - plugin context (effects scope the disposers).
- * @param webServer - the running web server.
- * @param world - the remote world coordinator.
+ * Parse one machine payload into upsert input. Secret fields follow the
+ * keep-on-absence rule: a body that omits `password`, `passphrase`, or
+ * `proxyPassword` keeps the stored value (the public wire never echoes
+ * secrets, so an edit that leaves them out cannot intend a clear), while an
+ * explicit string — empty included — sets or clears it.
+ * @param body - the JSON request body.
+ * @returns the machine fields to upsert.
  */
-export function registerRoutes(ctx: Context, webServer: WebServer, world: RemoteWorld): void {
-  const machineFromBody = (body: Record<string, unknown>): Partial<Machine> => ({
+export function machineFromBody(body: Record<string, unknown>): MachineInput {
+  return {
     name: String(body.name ?? ''),
     host: String(body.host ?? ''),
     port: Number(body.port ?? 22),
     username: String(body.username ?? ''),
-    password: String(body.password ?? ''),
+    password: body.password === undefined ? undefined : String(body.password),
     privateKeyPath: String(body.privateKeyPath ?? ''),
-    passphrase: String(body.passphrase ?? ''),
+    passphrase: body.passphrase === undefined ? undefined : String(body.passphrase),
     useAgent: body.useAgent === true,
     keyboardInteractive: body.keyboardInteractive === true,
     hostKeyMode: String(body.hostKeyMode ?? 'accept-new'),
@@ -134,13 +137,22 @@ export function registerRoutes(ctx: Context, webServer: WebServer, world: Remote
             host: String(body.proxyHost),
             port: Number(body.proxyPort ?? 22),
             username: String(body.proxyUsername ?? ''),
-            password: String(body.proxyPassword ?? ''),
+            ...(body.proxyPassword === undefined ? {} : { password: String(body.proxyPassword) }),
             privateKeyPath: '',
             passphrase: '',
           },
         }
       : {}),
-  })
+  }
+}
+
+/**
+ * Register the JSON routes on the live web server.
+ * @param ctx - plugin context (effects scope the disposers).
+ * @param webServer - the running web server.
+ * @param world - the remote world coordinator.
+ */
+export function registerRoutes(ctx: Context, webServer: WebServer, world: RemoteWorld): void {
 
   // Every remote operation names its machine explicitly — there is no
   // implicit default target. A missing or unknown machineId is an error,

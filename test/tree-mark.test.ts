@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { anchorTreeCss, DEFAULT_TREE_COLOR } from '../src/client/tree-mark.ts'
+import { anchorTreeCss, DEFAULT_TREE_COLOR, rootLabelParts, aliasForHoverText } from '../src/client/tree-mark.ts'
 import { anchorStatusRows } from '../src/routes.ts'
 import { RemoteWorld } from '../src/world.ts'
 import { sanitizeMachine } from '../src/registry.ts'
@@ -108,4 +108,21 @@ test('anchorStatusRows leaves an orphaned anchor without a machine or color', ()
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('rootLabelParts splits a remote path the way the shell draws a root', () => {
+  assert.deepEqual(rootLabelParts('/home/dev/myapp'), { directory: '/home/dev/', name: 'myapp' })
+  assert.deepEqual(rootLabelParts('/app'), { directory: '/', name: 'app' })
+  assert.deepEqual(rootLabelParts('D:\\remote\\app'), { directory: 'D:\\remote\\', name: 'app' })
+})
+
+test('aliasForHoverText matches exact and tilde-abbreviated displays', () => {
+  const aliases = new Map([
+    ['C:\\Users\\dev\\.dsh\\remote-workspaces\\h\\app', '/home/dev/app'],
+    ['/home/dev/.dsh/remote-workspaces/h/app', '/srv/app'],
+  ])
+  assert.equal(aliasForHoverText('C:\\Users\\dev\\.dsh\\remote-workspaces\\h\\app', aliases), '/home/dev/app')
+  assert.equal(aliasForHoverText('~/.dsh/remote-workspaces/h/app', aliases), '/srv/app')
+  assert.equal(aliasForHoverText('C:\\somewhere\\else', aliases), undefined)
+  assert.equal(aliasForHoverText('~', aliases), undefined)
 })
