@@ -92,6 +92,10 @@ export interface AnchorStatus {
   remotePath: string
   machineId: string
   color: string
+  /** The Workspace title the shell derives from the anchor directory (its basename). */
+  defaultTitle: string
+  /** Title that keeps this anchor distinguishable from another machine's same-named one. */
+  title: string
 }
 
 /** List every remote workspace anchor with its machine's marker color. */

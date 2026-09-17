@@ -19,6 +19,7 @@ import * as api from './api.ts'
 import { DICTIONARIES, NS } from './locales.ts'
 import { injectStyles } from './styles.ts'
 import { startTreeMark, refreshTreeMark } from './tree-mark.ts'
+import type { ServiceLookup } from './tree-mark.ts'
 import { RemoteFlow } from './flow.tsx'
 import { MachinesSection } from './settings.tsx'
 import { registerReferenceSource } from './reference.ts'
@@ -32,7 +33,14 @@ export const inject = ['slots', 'uiWorkspace', 'locale', 'inputTriggers']
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => injectStyles(), 'dsh-remote-development: stylesheet')
-  ctx.effect(() => startTreeMark(), 'dsh-remote-development: tree marker')
+  // The tree marker resolves the client Workspace service through this
+  // lookup: it needs the rows to settle colliding workspaces titles, but the
+  // controller package stays out of the plugin's dependency graph, so the
+  // lookup is duck-typed and its absence simply leaves titles alone.
+  ctx.effect(
+    () => startTreeMark(ctx as unknown as ServiceLookup),
+    'dsh-remote-development: tree marker',
+  )
   ctx.effect(() => {
     const disposers = DICTIONARIES.map(([locale, dict]) => ctx.locale.register(NS, locale, dict))
     return () => { for (const dispose of disposers) dispose() }

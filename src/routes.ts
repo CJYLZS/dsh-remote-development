@@ -11,7 +11,7 @@ import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
 import type { Machine, MachineInput } from './registry.ts'
-import { normalizeRemotePath } from './paths.ts'
+import { normalizeRemotePath, remoteBasename, shortHash } from './paths.ts'
 
 const ROUTE_PREFIX = '/dsh-remote-development'
 const BODY_LIMIT_BYTES = 256 * 1024
@@ -89,24 +89,93 @@ export interface AnchorStatusRow {
   machineId: string
   /** The machine's marker color, or '' for the theme default. */
   color: string
+  /** The Workspace title the shell derives from the anchor directory (its basename). */
+  defaultTitle: string
+  /**
+   * The title this anchor's Workspace must display to stay distinguishable;
+   * equal to `defaultTitle` unless another machine's anchor shares that
+   * basename, in which case the machine is appended (`myapp (build-box)`).
+   */
+  title: string
+}
+
+/** One anchor row before its display title is settled. */
+interface AnchorTitleInput {
+  /** The shell's own default title for the anchor directory. */
+  defaultTitle: string
+  /** Human-readable machine identity used to break a title tie. */
+  label: string
+  /** Remote root — the last-resort tie-break. */
+  remotePath: string
 }
 
 /**
- * Join every anchor with its machine's marker color. Orphaned anchors (their
- * machine is gone) keep their place in the list and simply lose the color.
+ * Settle one display title per anchor, so no two anchors share one.
+ *
+ * The sidebar's workspace rows carry no data hooks at all — the tree marker
+ * reaches them through the title in their action labels — so a title two
+ * anchors share paints both rows with whichever color is declared last. Two
+ * machines mounting the same remote directory (both `/srv/app`) collide
+ * exactly that way, because the shell titles a Workspace after the anchor
+ * directory's basename. Such a collision therefore resolves in the title: the
+ * machine name is appended, and ties that survive that (two machines sharing a
+ * name) fall back to a stable hash of the remote path.
+ * @param rows - the anchors, in list order.
+ * @returns the settled title per row, positionally aligned with `rows`.
+ */
+export function uniqueAnchorTitles(rows: readonly AnchorTitleInput[]): string[] {
+  const basenames = new Map<string, number>()
+  for (const row of rows) basenames.set(row.defaultTitle, (basenames.get(row.defaultTitle) ?? 0) + 1)
+  const labelled = rows.map((row) =>
+    (basenames.get(row.defaultTitle) ?? 0) > 1 ? `${row.defaultTitle} (${row.label})` : row.defaultTitle)
+  const titles = new Map<string, number>()
+  for (const title of labelled) titles.set(title, (titles.get(title) ?? 0) + 1)
+  return labelled.map((title, i) =>
+    (titles.get(title) ?? 0) > 1 ? `${title} -${shortHash(rows[i]!.remotePath)}` : title)
+}
+
+/**
+ * The label that stands for one anchor's machine in a disambiguated title. A
+ * name shared by two saved machines cannot tell them apart, so the identity
+ * triple is appended for every machine carrying it; an orphaned anchor (its
+ * machine is gone) falls back to the host it was created against.
+ * @param machine - the joined machine, or undefined for an orphan.
+ * @param host - the anchor's recorded host, used when no machine joins.
+ * @param duplicated - machine names that appear more than once in the registry.
+ * @returns the label.
+ */
+function anchorMachineLabel(machine: Machine | undefined, host: string, duplicated: ReadonlySet<string>): string {
+  if (machine === undefined) return host
+  return duplicated.has(machine.name)
+    ? `${machine.name} ${machine.username}@${machine.host}:${machine.port}`
+    : machine.name
+}
+
+/**
+ * Join every anchor with its machine's marker color and display title.
+ * Orphaned anchors (their machine is gone) keep their place in the list and
+ * simply lose the color.
  * @param world - the remote world coordinator.
  * @returns one row per anchor.
  */
 export function anchorStatusRows(world: RemoteWorld): AnchorStatusRow[] {
-  return world.anchors().map((a) => {
-    const ref = world.machineForAnchor(a)
+  const machines = world.listMachines()
+  const nameCounts = new Map<string, number>()
+  for (const machine of machines) nameCounts.set(machine.name, (nameCounts.get(machine.name) ?? 0) + 1)
+  const duplicated = new Set([...nameCounts].filter(([, n]) => n > 1).map(([name]) => name))
+  const rows = world.anchors().map((a) => {
+    const machine = world.machineForAnchor(a)?.machine
     return {
       dir: a.dir,
       remotePath: a.remoteRoot,
-      machineId: ref?.machine.id ?? '',
-      color: ref?.machine.color ?? '',
+      machineId: machine?.id ?? '',
+      color: machine?.color ?? '',
+      defaultTitle: remoteBasename(a.dir) || 'workspace',
+      label: anchorMachineLabel(machine, a.meta.host, duplicated),
     }
   })
+  const titles = uniqueAnchorTitles(rows)
+  return rows.map(({ label: _label, ...row }, i) => ({ ...row, title: titles[i]! }))
 }
 
 /**
