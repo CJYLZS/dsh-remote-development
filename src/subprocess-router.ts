@@ -241,6 +241,12 @@ class RemoteSpawnHandle implements SubprocessHandle {
     }
   }
 
+  get control(): undefined {
+    // No caller-owned byte channel crosses the SSH exec channel: the collect
+    // mode covers every remote consumer, and protocol framing stays local-only.
+    return undefined
+  }
+
   terminate(): void {
     this.terminated = true
     const state = this.state

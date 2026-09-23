@@ -79,6 +79,6 @@ export function registerToolVisibility(ctx: Context, world: RemoteWorld): void {
     })
   }
   for (const agent of ctx.agents.list()) install(agent)
-  ctx.on('agent/session-start', ({ agent }) => { install(agent) })
+  ctx.on('agent/created', ({ agent }) => { install(agent) })
   ctx.on('agent/disposed', ({ agent }) => { dispose(agent) })
 }

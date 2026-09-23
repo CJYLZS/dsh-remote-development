@@ -14,6 +14,13 @@
  * host's POSIX shell — the remote platform decides the remote dialect, never
  * the host platform.
  *
+ * Both remote and local workdirs go through the seam's one execution verb:
+ * `execute()` returns the live handle, remote ones built by
+ * {@link RemoteShellBranch} and local ones by the inherited executor. A remote
+ * handle owns its own deadline (`spec.onExpiry`), its output cap, and the
+ * remote process-group kill, so a timed-out or backgrounded remote command
+ * behaves like a local one.
+ *
  * The sandbox facts reported for remote runs carry the requested mode with
  * `denied: false` and no enforcement claim: the local sandbox runner never
  * wraps a remote command.
@@ -24,9 +31,13 @@ import { Context } from '@deepseek-ai/cordis'
 import { homedir } from 'node:os'
 import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
 import { SandboxPwshExecutor } from '@deepseek-ai/dsh-pwsh-sandbox'
-import type { ShellExecSpec, ShellProcess, ShellProcessRead, ShellRunResult } from '@deepseek-ai/dsh-shell'
+import type {
+  CollectedOutput, ShellExecution, ShellExecSpec, ShellProcessRead, ShellProcessStatus, ShellRunResult, ShellSandboxInfo,
+} from '@deepseek-ai/dsh-shell'
+import type { SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import type { CollectedOutput } from '@deepseek-ai/dsh-subprocess'
+import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
+import { UnsupportedRemoteError } from './pool.ts'
 import { RemoteWorld } from './world.ts'
 import type { MachineRef } from './world.ts'
 import { unconfiguredMachineMessage } from './world.ts'
@@ -38,8 +49,11 @@ const CD_FAIL_MARKER = '@@RDV_CD_FAIL@@'
 /** Marker line that reports the background script's root PID. */
 const PID_MARKER = '@@RDV_PID:'
 
-/** Why a background remote process settled. */
-type RemoteBgStatus = 'running' | 'completed' | 'killed'
+/** Timeout reason stamping the fused deadline; classification reads it back. */
+const TIMEOUT_CODE = 'BASH_TIMEOUT'
+
+/** Grace between the remote SIGTERM and the SIGKILL escalation, mirroring the local executor. */
+const KILL_ESCALATION_MS = 3_000
 
 /**
  * Replace anchor-directory spellings (absolute, `~`-relative, and `$HOME`/
@@ -72,9 +86,9 @@ export function rewriteAnchorSpellings(
 
 /**
  * The remote branch shared by both routing executors: workdir classification,
- * remote script composition, and foreground/background execution over the SSH
- * exec channel. Each host-platform executor owns its local fallback and
- * delegates every anchor-routed command here.
+ * remote script composition, and execution over the SSH exec channel. Each
+ * host-platform executor owns its local fallback and delegates every
+ * anchor-routed command here.
  */
 export class RemoteShellBranch {
   private readonly world: RemoteWorld
@@ -112,60 +126,32 @@ export class RemoteShellBranch {
   }
 
   /**
-   * Run one command on its remote machine.
+   * Start one command on its remote machine and return the live handle. The
+   * composed script reports its root PID first, so both the foreground
+   * deadline and a caller's kill reach the whole remote process group.
    * @param spec - the resolved shell spec.
    * @param route - the machine and remote cwd for the workdir.
    * @param sandboxMode - the executor's default sandbox mode, reported as the
    *   remote run's mode when the spec carries no per-call policy.
-   * @returns the remote outcome with non-enforcing sandbox facts.
+   * @returns the live remote execution handle.
    */
-  async run(
+  async execute(
     spec: ShellExecSpec,
     route: { machine: MachineRef; remotePath: string },
     sandboxMode: SandboxMode | undefined,
-  ): Promise<ShellRunResult> {
+  ): Promise<ShellExecution> {
     const pool = this.world.poolFor(route.machine)
-    const script = this.script(route, spec, [])
-    const command = `bash -c ${shq(script)}`
-    const result = await pool.exec(command, {
-      timeoutMs: spec.timeoutMs,
-      ...(spec.stdin !== undefined ? { stdin: spec.stdin } : {}),
-      ...(spec.signal !== undefined ? { signal: spec.signal } : {}),
-    })
-    if (result.stderr.includes(CD_FAIL_MARKER) && result.code === 125) {
-      throw new Error(`cannot use remote working directory ${route.remotePath}: ${result.stderr.replace(CD_FAIL_MARKER, '').trim()}`)
-    }
-    const stdout: CollectedOutput = {
-      text: result.stdout,
-      truncated: false,
-    }
-    const stderr: CollectedOutput = {
-      text: result.stderr,
-      truncated: false,
-    }
-    return {
-      exitCode: result.code,
-      signal: result.signal,
-      timedOut: result.timedOut,
-      aborted: !result.timedOut && spec.signal?.aborted === true,
-      timeoutMs: spec.timeoutMs,
-      stdout,
-      stderr,
-      sandbox: { mode: spec.sandboxPolicy?.mode ?? sandboxMode ?? 'danger-full-access', denied: false },
-    }
-  }
-
-  /**
-   * Start one remote background process.
-   * @param spec - the resolved shell spec.
-   * @param route - the machine and remote cwd for the workdir.
-   * @returns the live remote process handle.
-   */
-  start(spec: ShellExecSpec, route: { machine: MachineRef; remotePath: string }): ShellProcess {
-    const pool = this.world.poolFor(route.machine)
+    if (await pool.detectPlatform() === 'windows') throw new UnsupportedRemoteError()
     const script = this.script(route, spec, [`printf '${PID_MARKER}%s\\n' "$$"`])
-    const command = `bash -c ${shq(script)}`
-    return new RemoteBackgroundProcess(this.world, route.machine, command, spec, pool.tunables.maxOutputChars)
+    return new RemoteExecution({
+      world: this.world,
+      machine: route.machine,
+      remotePath: route.remotePath,
+      command: `bash -c ${shq(script)}`,
+      spec,
+      maxChars: pool.tunables.maxOutputChars,
+      mode: spec.sandboxPolicy?.mode ?? sandboxMode ?? 'danger-full-access',
+    })
   }
 
   /** Compose the remote script: cd guard, env exports, then the command. */
@@ -209,7 +195,7 @@ export class RoutingBashExecutor extends SandboxBashExecutor {
 
   /**
    * @param ctx - plugin context.
-   * @param config - the inherited executor config (defaults).
+   * @param config - the inherited executor config.
    * @param world - the remote world coordinator.
    */
   constructor(ctx: Context, config: ConstructorParameters<typeof SandboxBashExecutor>[1], world: RemoteWorld) {
@@ -217,16 +203,10 @@ export class RoutingBashExecutor extends SandboxBashExecutor {
     this.branch = new RemoteShellBranch(world)
   }
 
-  override async run(spec: ShellExecSpec): Promise<ShellRunResult> {
+  override async execute(spec: ShellExecSpec): Promise<ShellExecution> {
     const route = this.branch.routeOf(spec.workdir)
-    if (!route) return super.run(spec)
-    return this.branch.run(spec, route, this.sandboxMode)
-  }
-
-  override start(spec: ShellExecSpec): ShellProcess {
-    const route = this.branch.routeOf(spec.workdir)
-    if (!route) return super.start(spec)
-    return this.branch.start(spec, route)
+    if (!route) return super.execute(spec)
+    return this.branch.execute(spec, route, this.sandboxMode)
   }
 }
 
@@ -240,7 +220,7 @@ export class RoutingPwshExecutor extends SandboxPwshExecutor {
 
   /**
    * @param ctx - plugin context.
-   * @param config - the inherited executor config (defaults).
+   * @param config - the inherited executor config.
    * @param world - the remote world coordinator.
    */
   constructor(ctx: Context, config: ConstructorParameters<typeof SandboxPwshExecutor>[1], world: RemoteWorld) {
@@ -248,125 +228,53 @@ export class RoutingPwshExecutor extends SandboxPwshExecutor {
     this.branch = new RemoteShellBranch(world)
   }
 
-  override async run(spec: ShellExecSpec): Promise<ShellRunResult> {
+  override async execute(spec: ShellExecSpec): Promise<ShellExecution> {
     const route = this.branch.routeOf(spec.workdir)
-    if (!route) return super.run(spec)
-    return this.branch.run(spec, route, this.sandboxMode)
-  }
-
-  override start(spec: ShellExecSpec): ShellProcess {
-    const route = this.branch.routeOf(spec.workdir)
-    if (!route) return super.start(spec)
-    return this.branch.start(spec, route)
+    if (!route) return super.execute(spec)
+    return this.branch.execute(spec, route, this.sandboxMode)
   }
 }
 
 /**
- * One remote background process. The first stdout line carries the root PID
- * marker (filtered out of job output); kill() signals the remote process
- * group best-effort, then closes the channel.
+ * Bounded text retention for one remote stream. Appends decoded chunks, drops
+ * the head once the cap is exceeded, and serves both the consuming read cursor
+ * and the non-consuming offset readers from the same window, so a read that
+ * lost text reports `lossy` instead of silently skipping it.
  */
-class RemoteBackgroundProcess implements ShellProcess {
-  status: RemoteBgStatus = 'running'
-  exitCode: number | null = null
-  signal: NodeJS.Signals | null = null
-  readonly done: Promise<void>
-  private chunks: string[] = []
-  private readCursor = 0
-  private retained = 0
+class RetainedText {
+  private readonly chunks: string[] = []
+  /** Absolute offset of the retained window's first character. */
+  private base = 0
+  private length = 0
   private dropped = 0
-  private readonly maxBytes: number
-  private pending = ''
-  private markerDone = false
-  private remotePid: number | null = null
-  private killed = false
+
+  /** @param maxChars - retained characters; `<= 0` retains everything. */
+  constructor(private readonly maxChars: number) {}
+
+  /** Absolute offset just past the last character appended. */
+  get end(): number {
+    return this.base + this.length
+  }
+
+  /** Whether truncation ever dropped text from this stream. */
+  get truncated(): boolean {
+    return this.dropped > 0
+  }
 
   /**
-   * @param world - remote world (pool + audit).
-   * @param machine - target machine.
-   * @param command - the composed remote command line.
-   * @param spec - the resolved shell spec.
-   * @param maxBytes - output cap.
+   * Append one decoded chunk, trimming the head to the cap.
+   * @param text - the decoded chunk.
    */
-  constructor(
-    private readonly world: RemoteWorld,
-    private readonly machine: MachineRef,
-    private readonly command: string,
-    private readonly spec: ShellExecSpec,
-    maxBytes: number,
-  ) {
-    this.maxBytes = maxBytes
-    let resolveDone: () => void
-    this.done = new Promise<void>((resolve) => {
-      resolveDone = resolve
-    })
-    void this.run(resolveDone!)
-  }
-
-  private async run(resolveDone: () => void): Promise<void> {
-    try {
-      const pool = this.world.poolFor(this.machine)
-      const client = await pool.connect()
-      await new Promise<void>((resolve, reject) => {
-        client.exec(this.command, {}, (err, channel) => {
-          if (err) {
-            reject(new Error(`remote background command failed to start: ${err.message}`))
-            return
-          }
-          channel.on('data', (d: Buffer) => this.ingest(d.toString('utf8')))
-          channel.stderr?.on('data', (d: Buffer) => this.ingest(d.toString('utf8')))
-          channel.on('close', (code: number | undefined, sig: string | undefined) => {
-            this.status = this.killed ? 'killed' : 'completed'
-            this.exitCode = typeof code === 'number' ? code : null
-            this.signal = (sig as NodeJS.Signals) ?? null
-            this.world.audit(this.machine, this.spec.command, this.exitCode)
-            resolveDone()
-          })
-          if (this.spec.stdin !== undefined) channel.write(this.spec.stdin, 'utf8')
-          try { channel.end() } catch { /* stdin already closed */ }
-          if (this.spec.signal) {
-            if (this.spec.signal.aborted) this.kill()
-            else this.spec.signal.addEventListener('abort', () => this.kill(), { once: true })
-          }
-          resolve()
-        })
-      })
-    } catch (err) {
-      // A spawn failure settles as killed with the error on stderr (the seam
-      // contract), never as a rejected done.
-      this.status = 'killed'
-      this.exitCode = null
-      this.ingest(`\n[remote background spawn failed] ${(err as Error).message}\n`)
-      this.world.audit(this.machine, this.spec.command, null)
-      resolveDone()
-    }
-  }
-
-  private ingest(text: string): void {
-    this.pending += text
-    if (!this.markerDone) {
-      const nl = this.pending.indexOf('\n')
-      if (nl >= 0) {
-        const first = this.pending.slice(0, nl)
-        this.pending = this.pending.slice(nl + 1)
-        const at = first.indexOf(PID_MARKER)
-        if (at >= 0) {
-          const pid = Number.parseInt(first.slice(at + PID_MARKER.length), 10)
-          if (Number.isFinite(pid)) this.remotePid = pid
-        }
-        this.markerDone = true
-      }
-    }
-    if (!this.pending) return
-    this.chunks.push(this.pending)
-    this.retained += this.pending.length
-    this.pending = ''
-    if (this.maxBytes > 0 && this.retained > this.maxBytes) {
-      const cut = this.retained - this.maxBytes
-      this.dropped = cut
+  append(text: string): void {
+    if (text.length === 0) return
+    this.chunks.push(text)
+    this.length += text.length
+    if (this.maxChars > 0 && this.length > this.maxChars) {
+      const cut = this.length - this.maxChars
       let remaining = cut
       while (remaining > 0 && this.chunks.length > 0) {
         const head = this.chunks[0]
+        /* v8 ignore next -- the loop condition already proved a chunk exists. */
         if (head === undefined) break
         if (head.length <= remaining) {
           remaining -= head.length
@@ -376,30 +284,263 @@ class RemoteBackgroundProcess implements ShellProcess {
           remaining = 0
         }
       }
-      this.retained = this.maxBytes
+      this.base += cut
+      this.length = this.maxChars
+      this.dropped += cut
     }
   }
 
-  readOutput(): ShellProcessRead {
-    const lossy = this.dropped > 0
-    this.dropped = 0
-    let delta = ''
-    while (this.readCursor < this.chunks.length) {
-      const chunk = this.chunks[this.readCursor]
-      if (chunk !== undefined) delta += chunk
-      this.readCursor += 1
+  /**
+   * Read from an absolute offset, clamped to the retained window.
+   * @param from - absolute offset, as returned by a previous read.
+   * @returns the text, whether truncation dropped text this read cannot
+   *   include, and the offset to continue from.
+   */
+  readFrom(from: number): { text: string; lossy: boolean; nextOffset: number } {
+    if (from >= this.end) return { text: '', lossy: false, nextOffset: this.end }
+    const start = Math.max(from, this.base)
+    let skip = start - this.base
+    let text = ''
+    for (const chunk of this.chunks) {
+      if (skip >= chunk.length) {
+        skip -= chunk.length
+        continue
+      }
+      text += skip > 0 ? chunk.slice(skip) : chunk
+      skip = 0
     }
-    return { delta, lossy }
+    return { text, lossy: start > from, nextOffset: this.end }
+  }
+
+  /** The retained window as a collected stream output. */
+  collected(): CollectedOutput {
+    return { text: this.readFrom(this.base).text, truncated: this.truncated }
+  }
+}
+
+/** Everything one remote execution needs to start and report itself. */
+interface RemoteExecutionOptions {
+  /** The remote world coordinator (pool + audit). */
+  world: RemoteWorld
+  /** Target machine. */
+  machine: MachineRef
+  /** The remote working directory, named in cd-guard failures. */
+  remotePath: string
+  /** The composed remote command line. */
+  command: string
+  /** The resolved shell spec (deadline policy, stdin, environment, signal). */
+  spec: ShellExecSpec
+  /** Retained characters per stream, from the pool's tunables. */
+  maxChars: number
+  /** Sandbox mode reported as this run's fact. */
+  mode: SandboxMode
+}
+
+/**
+ * One remote execution over an SSH exec channel. Opening the channel is part of
+ * construction; stdout and stderr are captured into bounded buffers and served
+ * to both faces the seam defines — the consuming {@link readOutput} cursor with
+ * the non-consuming {@link observed} readers, and the foreground
+ * {@link result} projection with first-cause `timedOut`/`aborted`
+ * classification.
+ *
+ * A spawn that never produced a channel settles the handle as killed with the
+ * note on stderr and rejects `result()` with the original error, which is the
+ * seam's uniform containment for spawn failures.
+ */
+class RemoteExecution implements ShellExecution {
+  status: ShellProcessStatus = 'running'
+  exitCode: number | null = null
+  signal: NodeJS.Signals | null = null
+  readonly done: Promise<void>
+  readonly observed: { stdout: SubprocessOutputReader; stderr: SubprocessOutputReader }
+  readonly sandbox: ShellSandboxInfo
+
+  private readonly world: RemoteWorld
+  private readonly machine: MachineRef
+  private readonly remotePath: string
+  private readonly command: string
+  private readonly spec: ShellExecSpec
+  private readonly stdout: RetainedText
+  private readonly stderr: RetainedText
+  private readonly deadlineSignal: AbortSignal
+  private readonly disarmDeadline: () => void
+  private readonly onAbort: () => void
+  private stdoutCursor = 0
+  private stderrCursor = 0
+  private remotePid: number | null = null
+  private pendingMarker = ''
+  private markerParsed = false
+  private killed = false
+  private settled = false
+  private spawnFailure: unknown
+  private cdFailure: string | undefined
+  private resultPromise: Promise<ShellRunResult> | undefined
+  private resolveDone!: () => void
+
+  /** @param options - target, composed command, spec, and budget. */
+  constructor(options: RemoteExecutionOptions) {
+    this.world = options.world
+    this.machine = options.machine
+    this.remotePath = options.remotePath
+    this.command = options.command
+    this.spec = options.spec
+    this.stdout = new RetainedText(options.maxChars)
+    this.stderr = new RetainedText(options.maxChars)
+    this.sandbox = { mode: options.mode, denied: false }
+    this.observed = {
+      stdout: { readFrom: from => this.stdout.readFrom(from) },
+      stderr: { readFrom: from => this.stderr.readFrom(from) },
+    }
+    this.done = new Promise<void>((resolve) => {
+      this.resolveDone = resolve
+    })
+    // `'kill'` fuses the caller's cancellation with the executor's own timeout
+    // into one first-cause signal; `'none'` forwards cancellation only, leaving
+    // the command running past its nominal timeout for the caller to bound.
+    const armed = options.spec.onExpiry === 'kill'
+      ? deadline(options.spec.signal, options.spec.timeoutMs, TIMEOUT_CODE)
+      : undefined
+    this.deadlineSignal = armed?.signal ?? options.spec.signal ?? new AbortController().signal
+    this.disarmDeadline = armed === undefined ? () => {} : () => { armed[Symbol.dispose]() }
+    this.onAbort = (): void => { this.kill() }
+    this.deadlineSignal.addEventListener('abort', this.onAbort, { once: true })
+    void this.open()
+  }
+
+  private async open(): Promise<void> {
+    if (this.deadlineSignal.aborted) {
+      // A signal that is already aborted counts as fired: nothing is spawned.
+      this.settle(null, undefined, true)
+      return
+    }
+    try {
+      await this.openChannel()
+    } catch (error) {
+      this.spawnFailure = error
+      this.stderr.append(`\n[remote spawn failed] ${error instanceof Error ? error.message : String(error)}\n`)
+      this.settle(null, undefined, true)
+    }
+  }
+
+  /**
+   * Open the channel and wire it before yielding. Every listener is registered
+   * inside the exec callback: a channel that closes on the first turn would
+   * otherwise deliver `close` before an awaited continuation could attach, and
+   * the handle would never settle.
+   * @returns when the channel is open and wired.
+   */
+  private async openChannel(): Promise<void> {
+    const client = await this.world.poolFor(this.machine).connect()
+    await new Promise<void>((resolve, reject) => {
+      client.exec(this.command, {}, (error, stream) => {
+        if (error) {
+          reject(new Error(`remote command failed to start: ${error.message}`))
+          return
+        }
+        stream.on('data', (chunk: Buffer) => { this.ingestStdout(chunk.toString('utf8')) })
+        stream.stderr?.on('data', (chunk: Buffer) => { this.stderr.append(chunk.toString('utf8')) })
+        stream.on('close', (code: number | undefined, signal: string | undefined) => {
+          this.settle(typeof code === 'number' ? code : null, signal)
+        })
+        if (this.spec.stdin !== undefined) stream.write(this.spec.stdin, 'utf8')
+        try {
+          stream.end()
+        } catch {
+          // stdin was already closed by the remote side; the command still runs.
+        }
+        if (this.killed) this.killChannel()
+        resolve()
+      })
+    })
+  }
+
+  /**
+   * Ingest stdout, parsing the leading PID marker once so kill() can target the
+   * remote process group. The marker is the script's first line, so that line
+   * is consumed rather than shown.
+   */
+  private ingestStdout(text: string): void {
+    this.pendingMarker += text
+    if (!this.markerParsed) {
+      const newline = this.pendingMarker.indexOf('\n')
+      if (newline >= 0) {
+        const first = this.pendingMarker.slice(0, newline)
+        this.pendingMarker = this.pendingMarker.slice(newline + 1)
+        const at = first.indexOf(PID_MARKER)
+        if (at >= 0) {
+          const pid = Number.parseInt(first.slice(at + PID_MARKER.length), 10)
+          if (Number.isFinite(pid)) this.remotePid = pid
+        }
+        this.markerParsed = true
+      }
+    }
+    if (this.pendingMarker.length === 0) return
+    this.stdout.append(this.pendingMarker)
+    this.pendingMarker = ''
+  }
+
+  private settle(code: number | null, signal: string | undefined, killed = false): void {
+    if (this.settled) return
+    this.settled = true
+    this.disarmDeadline()
+    this.deadlineSignal.removeEventListener('abort', this.onAbort)
+    this.exitCode = code
+    this.signal = signal === undefined || signal === null ? null : signal as NodeJS.Signals
+    this.status = killed || this.killed || this.signal !== null ? 'killed' : 'completed'
+    if (this.exitCode === 125 && this.stderr.collected().text.includes(CD_FAIL_MARKER)) {
+      this.cdFailure = `cannot use remote working directory ${this.remotePath}: `
+        + this.stderr.collected().text.replace(CD_FAIL_MARKER, '').trim()
+    }
+    this.world.audit(this.machine, this.spec.command, this.exitCode)
+    this.resolveDone()
+  }
+
+  readOutput(): ShellProcessRead {
+    const out = this.stdout.readFrom(this.stdoutCursor)
+    const err = this.stderr.readFrom(this.stderrCursor)
+    this.stdoutCursor = out.nextOffset
+    this.stderrCursor = err.nextOffset
+    const separator = out.text.length > 0 && !out.text.endsWith('\n') ? '\n' : ''
+    return {
+      delta: out.text + (err.text.length > 0 ? `${separator}[stderr]\n${err.text}` : ''),
+      lossy: out.lossy || err.lossy,
+    }
   }
 
   kill(): boolean {
     if (this.status !== 'running') return false
     this.killed = true
-    void this.signalRemote('TERM')
-    setTimeout(() => {
-      if (this.status === 'running') void this.signalRemote('KILL')
-    }, 3000).unref()
+    this.killChannel()
     return true
+  }
+
+  /** Signal the remote process group, escalating to SIGKILL after the grace. */
+  private killChannel(): void {
+    void this.signalRemote('TERM')
+    const escalate = setTimeout(() => {
+      if (this.status === 'running') void this.signalRemote('KILL')
+    }, KILL_ESCALATION_MS)
+    escalate.unref()
+  }
+
+  result(): Promise<ShellRunResult> {
+    this.resultPromise ??= this.done.then(() => {
+      if (this.spawnFailure !== undefined) throw this.spawnFailure
+      if (this.cdFailure !== undefined) throw new Error(this.cdFailure)
+      const timedOut = timeoutOf(this.deadlineSignal, TIMEOUT_CODE) !== undefined
+      return {
+        exitCode: this.exitCode,
+        signal: this.signal,
+        timedOut,
+        aborted: !timedOut && this.deadlineSignal.aborted,
+        timeoutMs: this.spec.timeoutMs,
+        stdout: this.stdout.collected(),
+        stderr: this.stderr.collected(),
+        sandbox: this.sandbox,
+      }
+    })
+    return this.resultPromise
   }
 
   private async signalRemote(scope: 'TERM' | 'KILL'): Promise<void> {
@@ -411,7 +552,7 @@ class RemoteBackgroundProcess implements ShellProcess {
     try {
       await this.world.execOn(this.machine, command, { timeoutMs: 5000 })
     } catch {
-      // Best-effort: the channel close still tears the session down.
+      // Best-effort: closing the channel still tears the session down.
     }
   }
 }

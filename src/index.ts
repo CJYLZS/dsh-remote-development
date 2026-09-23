@@ -24,6 +24,10 @@
  */
 
 import { Context } from '@deepseek-ai/cordis'
+import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
+import { SandboxPwshExecutor } from '@deepseek-ai/dsh-pwsh-sandbox'
+import type { Config as BashShellConfig } from '@deepseek-ai/dsh-bash-sandbox'
+import type { Config as PwshShellConfig } from '@deepseek-ai/dsh-pwsh-sandbox'
 import { Config } from './config.ts'
 import type { ResolvedConfig } from './config.ts'
 import { RemoteWorld } from './world.ts'
@@ -86,6 +90,13 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
   // POSIX hosts twin the bash stack. Both route anchor workdirs to the
   // remote host's POSIX shell — the remote platform decides the remote
   // dialect, never the host platform.
+  //
+  // The budgets go through the executor's OWN Config schema, not a hand-kept
+  // object: resolution is what turns each field into the live accessor the
+  // executor reads (`Volatile.get()`), and it is where schema defaults apply,
+  // so a field added upstream needs no change here. Schemastery performs that
+  // step inside resolve, which is why the resolved value needs the same
+  // assertion the executor's own constructor documents.
   const shellBudgets = {
     cwd: process.cwd(),
     timeoutMs: SHELL_TIMEOUT_MS,
@@ -95,9 +106,11 @@ export function apply(ctx: Context, config: ResolvedConfig): void {
     graceMs: SHELL_GRACE_MS,
   }
   if (process.platform === 'win32') {
-    new RoutingPwshExecutor(ctx, shellBudgets, world)
+    const resolved = SandboxPwshExecutor.Config(shellBudgets)
+    new RoutingPwshExecutor(ctx, resolved as unknown as PwshShellConfig, world)
   } else {
-    new RoutingBashExecutor(ctx, shellBudgets, world)
+    const resolved = SandboxBashExecutor.Config(shellBudgets)
+    new RoutingBashExecutor(ctx, resolved as unknown as BashShellConfig, world)
   }
 
   registerPrompt(ctx, world)

@@ -23,6 +23,7 @@
 
 - [核心特性](#核心特性)
 - [安装](#安装)
+- [兼容性](#兼容性)
 - [使用](#使用)
 - [理解设计](#理解设计)
 - [配置](#配置)
@@ -35,11 +36,22 @@
 <a id="安装"></a>
 ## 安装
 
-推荐直接从 GitHub 安装——`lib/` 构建产物已入库，一条命令即可，无需构建：
+先确认宿主的 dsh 版本：
 
 ```sh
-dsh plugin add --profile web github:CJYLZS/dsh-remote-development
+dsh -V
 ```
+
+再按[兼容性](#兼容性)选插件版本。**安装命令一律带 `#<tag>`**：不带 ref 的 `github:` 安装取默认分支 HEAD，会随仓库漂移，而插件与宿主必须同代才能运行。
+
+| 你的 dsh | 插件版本 | 安装命令 |
+| --- | --- | --- |
+| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.2.0` |
+| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.1.0` |
+
+`lib/` 构建产物随 tag 入库，所以从 tag 安装无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。profile 的 `package.json` 记录你选的那个 ref。
+
+换版本：用新的 ref 重新 add 即覆盖；彻底移除则 `dsh plugin remove --profile web dsh-remote-development`。
 
 开发模式则链接本地检出：
 
@@ -53,6 +65,18 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 `link:` 安装把 profile 指向检出目录，之后每次 `pnpm run build` 重启 harness 即生效，无需重新 add。
 
 安装后重启 harness。
+
+<a id="兼容性"></a>
+## 兼容性
+
+dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保留兼容层：执行入口收敛为 `resolve()` + `execute()`（`run()`/`start()` 被删除），本地执行器的 Config 改为活配置访问器（`Volatile`，并新增 `pwshPath`）。因此插件与宿主按代对应：
+
+- **v0.2.x → dsh ≥ 0.1.7-alpha.1**，声明为 `peerDependencies: >=0.1.7-alpha.1 <0.2.0`。
+- **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x**（`run()`/`start()` seam）。
+
+装错版本不会自动拦截，典型表现：插件比宿主旧时，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；插件比宿主新时，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
+
+宿主发布新一代 alpha 时，peer 范围需要相应更新（semver 的 prerelease 规则不会自动放行新的 alpha）。
 
 <a id="使用"></a>
 ## 使用
@@ -128,7 +152,7 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 <a id="开发说明"></a>
 ## 开发说明
 
-插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（^0.1.2-rc.1，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
+插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（`>=0.1.7-alpha.1 <0.2.0`，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
 
 命令：`pnpm run build`（tsdown，双半）、`pnpm run typecheck`、`pnpm run test`（node:test 经 tsx；无需 SSH 服务器——连接池接受注入的 client 工厂，SFTP 表面使用假件）。
 

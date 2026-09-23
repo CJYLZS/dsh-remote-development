@@ -23,6 +23,7 @@ This plugin adds lightweight remote development to DeepSeek Harness: you registe
 
 - [Highlights](#highlights)
 - [Install](#install)
+- [Compatibility](#compatibility)
 - [Usage](#usage)
 - [Understand the design](#understand-the-design)
 - [Configuration](#configuration)
@@ -35,11 +36,22 @@ This plugin adds lightweight remote development to DeepSeek Harness: you registe
 <a id="install"></a>
 ## Install
 
-From GitHub (recommended) — the built `lib/` is committed, so it is one command with no build step:
+Check the host dsh version first:
 
 ```sh
-dsh plugin add --profile web github:CJYLZS/dsh-remote-development
+dsh -V
 ```
+
+Then pick the plugin version from [Compatibility](#compatibility). **Always install with a `#<tag>` ref**: a `github:` install without one takes the default branch HEAD, which drifts, and the plugin and its host must be from the same generation to run.
+
+| Your dsh | Plugin version | Install command |
+| --- | --- | --- |
+| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.2.0` |
+| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.1.0` |
+
+The built `lib/` is committed with each tag, so a tag install needs no build step and never hits pnpm's `allowBuilds` gate for `prepare` scripts. The profile's `package.json` records the ref you chose.
+
+To change versions, re-add with the new ref; to remove the plugin, `dsh plugin remove --profile web dsh-remote-development`.
 
 For development, link a local checkout instead:
 
@@ -53,6 +65,18 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 A `link:` install points the profile at the checkout directory, so later `pnpm run build` runs apply on the next harness restart without re-adding.
 
 Restart the harness after installing.
+
+<a id="compatibility"></a>
+## Compatibility
+
+dsh changed the shell seam in 0.1.7-alpha.1 with two breaking changes and no compatibility layer: execution converged on `resolve()` + `execute()` (`run()`/`start()` were deleted), and the local executors' Config became live accessors (`Volatile`, plus a new `pwshPath`). Plugin and host therefore pair by generation:
+
+- **v0.2.x → dsh ≥ 0.1.7-alpha.1**, declared as `peerDependencies: >=0.1.7-alpha.1 <0.2.0`.
+- **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x** (the `run()`/`start()` seam).
+
+A mismatched pair is not caught automatically. Its symptoms: with an older plugin on a newer host, startup throws `TypeError: Cannot read properties of undefined (reading 'get')` while constructing the local executor (reading `config.pwshPath`); with a newer plugin on an older host, startup fails validation at the same constructor (`pwsh-local: timeoutMs must be a positive finite number`) and commands throw `ctx.shell.run is not a function`.
+
+When the host publishes the next alpha generation, the peer range needs updating with it (semver's prerelease rules will not admit a new alpha on their own).
 
 <a id="usage"></a>
 ## Usage
@@ -128,7 +152,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 <a id="dev-note"></a>
 ## Dev Note
 
-The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (^0.1.2-rc.1, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
+The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1 <0.2.0`, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
 
 Commands: `pnpm run build` (tsdown, both halves), `pnpm run typecheck`, `pnpm run test` (node:test via tsx; no SSH server needed — the pool accepts an injected client factory and the SFTP surface is faked).
 
