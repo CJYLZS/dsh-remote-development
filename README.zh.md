@@ -23,6 +23,7 @@
 
 - [核心特性](#核心特性)
 - [安装](#安装)
+  - [Desktop](#desktop)
 - [兼容性](#兼容性)
 - [使用](#使用)
 - [理解设计](#理解设计)
@@ -42,16 +43,34 @@
 dsh -V
 ```
 
-再按[兼容性](#兼容性)选插件版本。**安装命令一律带 `#<tag>`**：不带 ref 的 `github:` 安装取默认分支 HEAD，会随仓库漂移，而插件与宿主必须同代才能运行。
+dsh ≥ 0.1.7-alpha.1（当前代）直接安装默认分支上的最新插件，**不需要加 `#<tag>`**：
 
-| 你的 dsh | 插件版本 | 安装命令 |
-| --- | --- | --- |
-| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.2.0` |
-| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.1.0` |
+```sh
+dsh plugin add --profile web github:CJYLZS/dsh-remote-development
+```
 
-`lib/` 构建产物随 tag 入库，所以从 tag 安装无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。profile 的 `package.json` 记录你选的那个 ref。
+只有旧一代宿主仍需锁定 ref：dsh 0.1.2-rc.1 – 0.1.5-rc.x 对应 v0.1.x，在该命令后追加 `#v0.1.0` 即可。配对关系见[兼容性](#兼容性)。
 
-换版本：用新的 ref 重新 add 即覆盖；彻底移除则 `dsh plugin remove --profile web dsh-remote-development`。
+`lib/` 构建产物已入库，从 GitHub 安装无需构建，也不会触发 pnpm 对 `prepare` 脚本的 `allowBuilds` 拦截。profile 的 `package.json` 记录你安装的内容。
+
+彻底移除：`dsh plugin remove --profile web dsh-remote-development`。
+
+<a id="desktop"></a>
+### Desktop
+
+Desktop 只内置当前一代 dsh，不存在低版本，没有需要配对的旧宿主、也不需要选 ref，直接安装即可：
+
+```sh
+dsh plugin add --profile desktop github:CJYLZS/dsh-remote-development
+```
+
+请使用 Desktop 自带的 `dsh`：它位于安装目录下的 `resources\runtime\cli\bin`（Windows 为 `dsh.cmd`，macOS 为 `bin/dsh`）。以 Windows 为例，命令为：
+
+```
+<安装目录>\resources\runtime\cli\bin\dsh.cmd plugin add --profile desktop github:CJYLZS/dsh-remote-development
+```
+
+npm 安装的 `dsh` 无法管理 desktop profile。请先启动一次 Desktop 以初始化其 profile，完全退出应用后执行上述命令，再重新打开 Desktop 即可使用该插件。
 
 开发模式则链接本地检出：
 

@@ -23,6 +23,7 @@ This plugin adds lightweight remote development to DeepSeek Harness: you registe
 
 - [Highlights](#highlights)
 - [Install](#install)
+  - [Desktop](#desktop)
 - [Compatibility](#compatibility)
 - [Usage](#usage)
 - [Understand the design](#understand-the-design)
@@ -42,16 +43,34 @@ Check the host dsh version first:
 dsh -V
 ```
 
-Then pick the plugin version from [Compatibility](#compatibility). **Always install with a `#<tag>` ref**: a `github:` install without one takes the default branch HEAD, which drifts, and the plugin and its host must be from the same generation to run.
+For dsh ≥ 0.1.7-alpha.1 (the current generation) install the latest plugin straight from the default branch — **no `#<tag>` ref is needed**:
 
-| Your dsh | Plugin version | Install command |
-| --- | --- | --- |
-| ≥ 0.1.7-alpha.1 | v0.2.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.2.0` |
-| 0.1.2-rc.1 – 0.1.5-rc.x | v0.1.x | `dsh plugin add --profile web github:CJYLZS/dsh-remote-development#v0.1.0` |
+```sh
+dsh plugin add --profile web github:CJYLZS/dsh-remote-development
+```
 
-The built `lib/` is committed with each tag, so a tag install needs no build step and never hits pnpm's `allowBuilds` gate for `prepare` scripts. The profile's `package.json` records the ref you chose.
+Only the older generation still needs a pinned ref: dsh 0.1.2-rc.1 – 0.1.5-rc.x is served by v0.1.x, so append `#v0.1.0` to that command. See [Compatibility](#compatibility) for the pairing.
 
-To change versions, re-add with the new ref; to remove the plugin, `dsh plugin remove --profile web dsh-remote-development`.
+The built `lib/` is committed, so a GitHub install needs no build step and never hits pnpm's `allowBuilds` gate for `prepare` scripts. The profile's `package.json` records what you installed.
+
+To remove the plugin, `dsh plugin remove --profile web dsh-remote-development`.
+
+<a id="desktop"></a>
+### Desktop
+
+Desktop ships only the current dsh generation: there is no older version to pair with and nothing to pin, so install directly:
+
+```sh
+dsh plugin add --profile desktop github:CJYLZS/dsh-remote-development
+```
+
+Use the `dsh` bundled with Desktop. It lives under the installation directory at `resources\runtime\cli\bin` (`dsh.cmd` on Windows, `bin/dsh` on macOS), so on Windows the command above becomes:
+
+```
+<installation directory>\resources\runtime\cli\bin\dsh.cmd plugin add --profile desktop github:CJYLZS/dsh-remote-development
+```
+
+An npm-installed `dsh` cannot manage the desktop profile. Launch Desktop once so it initializes its profile, fully quit the application, run the command, then reopen Desktop to use the plugin.
 
 For development, link a local checkout instead:
 
