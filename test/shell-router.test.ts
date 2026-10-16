@@ -77,7 +77,11 @@ function fakeWorld(options: {
           for (const line of script?.stderr ?? []) stream.emitStderrLine(Buffer.from(line))
           const close = (): void => { stream.emitLine('close', options.exitCode ?? 0, undefined) }
           if (script?.closeAfterMs === undefined) close()
-          else setTimeout(close, script.closeAfterMs).unref()
+          // Ref'd (not unref'd): the fake channel must model a real SSH socket,
+          // which keeps the event loop alive until the channel actually closes.
+          // An unref'd timer lets the loop empty before the close, so the
+          // execution's `done` never settles and the test is cancelled.
+          else setTimeout(close, script.closeAfterMs)
         })
       })
     },
