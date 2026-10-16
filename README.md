@@ -43,7 +43,7 @@ Check the host dsh version first:
 dsh -V
 ```
 
-For dsh ≥ 0.1.7-alpha.1 (the current generation) install the latest plugin straight from the default branch — **no `#<tag>` ref is needed**:
+For dsh ≥ 0.2.1-alpha.1 (the current generation) install the latest plugin straight from the default branch — **no `#<tag>` ref is needed**:
 
 ```sh
 dsh plugin add --profile web github:CJYLZS/dsh-remote-development
@@ -90,7 +90,8 @@ Restart the harness after installing.
 
 dsh changed the shell seam in 0.1.7-alpha.1 with two breaking changes and no compatibility layer: execution converged on `resolve()` + `execute()` (`run()`/`start()` were deleted), and the local executors' Config became live accessors (`Volatile`, plus a new `pwshPath`). Plugin and host therefore pair by generation:
 
-- **v0.2.x → dsh ≥ 0.1.7-alpha.1**, declared as `peerDependencies: >=0.1.7-alpha.1 <0.2.0`.
+- **v0.3.x → dsh 0.2.1-alpha.1 and later (the 0.2.x generation)**, declared as `peerDependencies: >=0.2.1-alpha.1 <0.3.0`.
+- **v0.2.x → dsh 0.1.7-alpha.1 – 0.2.0** (the `resolve()`/`execute()` shell seam as first shipped).
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x** (the `run()`/`start()` seam).
 
 A mismatched pair is not caught automatically. Its symptoms: with an older plugin on a newer host, startup throws `TypeError: Cannot read properties of undefined (reading 'get')` while constructing the local executor (reading `config.pwshPath`); with a newer plugin on an older host, startup fails validation at the same constructor (`pwsh-local: timeoutMs must be a positive finite number`) and commands throw `ctx.shell.run is not a function`.
@@ -172,7 +173,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 <a id="dev-note"></a>
 ## Dev Note
 
-The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1 <0.2.0`, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
+The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.2.1-alpha.1 <0.3.0`, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
 
 Commands: `pnpm run build` (tsdown, both halves), `pnpm run typecheck`, `pnpm run test` (node:test via tsx; no SSH server needed — the pool accepts an injected client factory and the SFTP surface is faked).
 

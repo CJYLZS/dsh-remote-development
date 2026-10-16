@@ -43,7 +43,7 @@
 dsh -V
 ```
 
-dsh ≥ 0.1.7-alpha.1（当前代）直接安装默认分支上的最新插件，**不需要加 `#<tag>`**：
+dsh ≥ 0.2.1-alpha.1（当前代）直接安装默认分支上的最新插件，**不需要加 `#<tag>`**：
 
 ```sh
 dsh plugin add --profile web github:CJYLZS/dsh-remote-development
@@ -90,7 +90,8 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保留兼容层：执行入口收敛为 `resolve()` + `execute()`（`run()`/`start()` 被删除），本地执行器的 Config 改为活配置访问器（`Volatile`，并新增 `pwshPath`）。因此插件与宿主按代对应：
 
-- **v0.2.x → dsh ≥ 0.1.7-alpha.1**，声明为 `peerDependencies: >=0.1.7-alpha.1 <0.2.0`。
+- **v0.3.x → dsh 0.2.1-alpha.1 及更高（0.2.x 代）**，声明为 `peerDependencies: >=0.2.1-alpha.1 <0.3.0`。
+- **v0.2.x → dsh 0.1.7-alpha.1 – 0.2.0**（首版的 `resolve()`/`execute()` shell seam）。
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x**（`run()`/`start()` seam）。
 
 装错版本不会自动拦截，典型表现：插件比宿主旧时，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；插件比宿主新时，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
@@ -172,7 +173,7 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 <a id="开发说明"></a>
 ## 开发说明
 
-插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（`>=0.1.7-alpha.1 <0.2.0`，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
+插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（`>=0.2.1-alpha.1 <0.3.0`，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
 
 命令：`pnpm run build`（tsdown，双半）、`pnpm run typecheck`、`pnpm run test`（node:test 经 tsx；无需 SSH 服务器——连接池接受注入的 client 工厂，SFTP 表面使用假件）。
 
