@@ -90,12 +90,14 @@ Restart the harness after installing.
 
 dsh changed the shell seam in 0.1.7-alpha.1 with two breaking changes and no compatibility layer: execution converged on `resolve()` + `execute()` (`run()`/`start()` were deleted), and the local executors' Config became live accessors (`Volatile`, plus a new `pwshPath`). Plugin and host therefore pair by generation:
 
-- **v0.2.x → dsh ≥ 0.1.7-alpha.1**, declared as `peerDependencies: >=0.1.7-alpha.1 <0.2.0`.
+- **v0.2.x → dsh ≥ 0.1.7-alpha.1**, declared as `peerDependencies: >=0.1.7-alpha.1` (open-ended).
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x** (the `run()`/`start()` seam).
 
-A mismatched pair is not caught automatically. Its symptoms: with an older plugin on a newer host, startup throws `TypeError: Cannot read properties of undefined (reading 'get')` while constructing the local executor (reading `config.pwshPath`); with a newer plugin on an older host, startup fails validation at the same constructor (`pwsh-local: timeoutMs must be a positive finite number`) and commands throw `ctx.shell.run is not a function`.
+The range is open-ended because the current code was verified unchanged on dsh 0.2.1-rc.1: installation, the Web settings section, remote directory browsing, and a remote session's bash, file, and search tools all work. dsh 0.2.1's plugin manager enforces peer ranges at install time, so a plugin that still declares the old `<0.2.0` bound is refused as incompatible; this release widens the range instead of requiring a per-version risk exemption.
 
-When the host publishes the next alpha generation, the peer range needs updating with it (semver's prerelease rules will not admit a new alpha on their own).
+Older mismatched pairs still fail rather than being caught: a v0.1.x plugin on a 0.1.7+ host throws `TypeError: Cannot read properties of undefined (reading 'get')` while constructing the local executor (reading `config.pwshPath`), and a 0.1.7+ plugin on a v0.1.x host fails validation at the same constructor (`pwsh-local: timeoutMs must be a positive finite number`) with commands throwing `ctx.shell.run is not a function`.
+
+The open-ended range admits later 0.2.x releases; a 0.3 generation still needs a compatibility check before it can be trusted (semver's prerelease rules will not admit a new alpha on their own).
 
 <a id="usage"></a>
 ## Usage
@@ -172,7 +174,7 @@ Machines are managed in the settings section; the plugin itself takes config def
 <a id="dev-note"></a>
 ## Dev Note
 
-The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1 <0.2.0`, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
+The plugin directory is a self-contained pnpm workspace (`packages: [- .]`, `storeDir: .pnpm-store`) so pnpm cannot reach the harness repository's workspace. dsh framework packages are declared as `peerDependencies` (`>=0.1.7-alpha.1`, supplied by the host profile) and pinned exactly in `devDependencies` for local types and builds; no relative `link:` dependencies exist inside the dependency graph, so the directory builds standalone in any location.
 
 Commands: `pnpm run build` (tsdown, both halves), `pnpm run typecheck`, `pnpm run test` (node:test via tsx; no SSH server needed — the pool accepts an injected client factory and the SFTP surface is faked).
 

@@ -90,12 +90,14 @@ dsh plugin add --profile web link:/absolute/path/to/dsh-remote-development
 
 dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保留兼容层：执行入口收敛为 `resolve()` + `execute()`（`run()`/`start()` 被删除），本地执行器的 Config 改为活配置访问器（`Volatile`，并新增 `pwshPath`）。因此插件与宿主按代对应：
 
-- **v0.2.x → dsh ≥ 0.1.7-alpha.1**，声明为 `peerDependencies: >=0.1.7-alpha.1 <0.2.0`。
+- **v0.2.x → dsh ≥ 0.1.7-alpha.1**，声明为 `peerDependencies: >=0.1.7-alpha.1`（不设上限）。
 - **v0.1.x → dsh 0.1.2-rc.1 – 0.1.5-rc.x**（`run()`/`start()` seam）。
 
-装错版本不会自动拦截，典型表现：插件比宿主旧时，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；插件比宿主新时，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
+该范围不设上限，是因为现有代码在 dsh 0.2.1-rc.1 上实测无需修改：安装、Web 设置页、远程目录浏览，以及远程会话中的 bash、文件与搜索工具均正常工作。dsh 0.2.1 的插件管理器在安装时校验 peer 范围，仍声明旧上限 `<0.2.0` 的插件会被判为不兼容而拒绝安装；本次直接放宽范围，不需要逐版本风险豁免。
 
-宿主发布新一代 alpha 时，peer 范围需要相应更新（semver 的 prerelease 规则不会自动放行新的 alpha）。
+更早的错配组合仍不会被自动拦截：v0.1.x 插件装在 0.1.7+ 宿主上，启动即抛 `TypeError: Cannot read properties of undefined (reading 'get')`（构造本地执行器时读 `config.pwshPath`）；0.1.7+ 插件装在 v0.1.x 宿主上，启动在本地执行器构造处校验失败（`pwsh-local: timeoutMs must be a positive finite number`），命令执行时抛 `ctx.shell.run is not a function`。
+
+该开放范围会放行后续 0.2.x 版本；0.3 一代仍需重新做兼容性实测后才能信任（semver 的 prerelease 规则不会自动放行新的 alpha）。
 
 <a id="使用"></a>
 ## 使用
@@ -172,7 +174,7 @@ dsh 在 0.1.7-alpha.1 对 shell seam 做了两处破坏性改动，都没有保�
 <a id="开发说明"></a>
 ## 开发说明
 
-插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（`>=0.1.7-alpha.1 <0.2.0`，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
+插件目录是自包含的 pnpm workspace（`packages: [- .]`、`storeDir: .pnpm-store`），阻断 pnpm 向上探测 harness 仓库的 workspace。dsh 框架包声明为 `peerDependencies`（`>=0.1.7-alpha.1`，由宿主 profile 提供），并在 `devDependencies` 中精确锁同版本用于本地类型与构建；依赖图内不存在相对 `link:` 依赖，因此该目录可在任意位置独立构建。
 
 命令：`pnpm run build`（tsdown，双半）、`pnpm run typecheck`、`pnpm run test`（node:test 经 tsx；无需 SSH 服务器——连接池接受注入的 client 工厂，SFTP 表面使用假件）。
 
