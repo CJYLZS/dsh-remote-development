@@ -92,8 +92,14 @@ export interface HostKeyStore {
   write: (entries: Record<string, KnownHostEntry>) => void
 }
 
+/**
+ * Messages that mean the pooled connection is gone, so the call may be retried
+ * once on a fresh one. "Not connected" is ssh2's own throw when `exec` runs on
+ * a client whose socket is no longer writable — the shape a corpse takes when
+ * a death notice was missed, and not a channel-specific failure.
+ */
 const CHANNEL_DEAD_PATTERN =
-  /channel open failure|open failed|unexpected .*session termination|session termination|disconnect/i
+  /channel open failure|open failed|unexpected .*session termination|session termination|disconnect|not connected/i
 
 /**
  * One persistent SSH connection to a single remote identity. Concurrent calls
@@ -256,6 +262,20 @@ export class SshPool {
       })
       client.on('error', (err) => rejectOnce(err))
       client.on('close', () => rejectOnce(new Error('ssh connection closed')))
+      // A live connection dies whenever the server restarts, a middlebox drops
+      // the idle session, or keepalive gives up — long after `ready` settled
+      // this promise, so `rejectOnce` is a no-op by then and the pooled client
+      // would stay cached as a corpse. Every later call would hand that corpse
+      // to ssh2's `exec`, which throws a bare "Not connected" that names no
+      // connection, leaving the pool broken until the host process restarts
+      // (the field report: one machine "Not connected" forever while every
+      // other machine and a fresh client work). Drop the corpse instead, so
+      // the next call opens a new connection.
+      const dropIfLive = (): void => {
+        if (this.client === client) this.invalidate()
+      }
+      client.on('error', dropIfLive)
+      client.on('close', dropIfLive)
 
       const buildOpts = (): Record<string, unknown> => {
         const opts: Record<string, unknown> = {

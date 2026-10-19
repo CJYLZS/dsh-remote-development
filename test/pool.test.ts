@@ -53,6 +53,92 @@ test('platform detection runs once and never re-enters itself', async () => {
   assert.deepEqual(commands, ['uname -s', 'echo one', 'echo two'])
 })
 
+/**
+ * One fake client per connection. `alive` models ssh2's own socket guard:
+ * exec on a client whose socket is gone throws the bare "Not connected" that
+ * the real library throws.
+ */
+function fakeClientFactory(): { factory: () => SshClientLike; opens: () => number; kill: () => void } {
+  let opens = 0
+  let liveHandlers: Map<string, (v?: unknown) => void> | null = null
+  let alive = false
+  const factory = (): SshClientLike => {
+    opens += 1
+    alive = false
+    const handlers = new Map<string, (v?: unknown) => void>()
+    liveHandlers = handlers
+    return {
+      on(event: string, fn: (v?: unknown) => void): unknown { handlers.set(event, fn); return undefined },
+      connect(): void { alive = true; queueMicrotask(() => handlers.get('ready')?.()) },
+      exec(_c: string, _o: unknown, cb: (err: Error | undefined, stream: ClientChannel) => void): void {
+        if (!alive) throw new Error('Not connected')
+        const stream = fakeStream()
+        queueMicrotask(() => {
+          cb(undefined, stream)
+          queueMicrotask(() => {
+            stream.emit('data', Buffer.from('Linux\n'))
+            stream.emit('close', 0, undefined)
+          })
+        })
+      },
+      sftp(cb: (err: Error | undefined, sftp: unknown) => void): void { cb(new Error('unused'), undefined) },
+      forwardOut(): void {},
+      end(): void { alive = false },
+    } as unknown as SshClientLike
+  }
+  return {
+    factory,
+    opens: () => opens,
+    kill: () => {
+      alive = false
+      liveHandlers?.get('close')?.()
+    },
+  }
+}
+
+const TARGET = {
+  host: 'h', port: 22, username: 'u', password: 'p', privateKeyPath: '', passphrase: '',
+  useAgent: false, keyboardInteractive: false, hostKeyMode: 'accept-new',
+}
+const TUNABLES = { connectTimeoutMs: 1000, commandTimeoutMs: 1000, maxOutputChars: 100, maxFileBytes: 100 }
+
+test('a live connection that dies is dropped, so the next exec reconnects', async () => {
+  const fake = fakeClientFactory()
+  const pool = new SshPool(TARGET, TUNABLES, { read: () => ({}), write: () => {} }, fake.factory)
+
+  await pool.exec('echo one')
+  assert.equal(fake.opens(), 1)
+
+  // The server restart / idle NAT drop that leaves the cached client a corpse.
+  fake.kill()
+  const second = await pool.exec('echo two')
+
+  assert.equal(second.code, 0)
+  assert.equal(fake.opens(), 2, 'a dead live connection is replaced, not reused')
+})
+
+test('ssh2 "Not connected" is a dead-connection message and retries once', async () => {
+  const fake = fakeClientFactory()
+  let calls = 0
+  const factory = (): SshClientLike => {
+    const client = fake.factory()
+    const exec = client.exec.bind(client)
+    client.exec = ((c: string, o: Record<string, unknown>, cb: (err: Error | undefined, stream: ClientChannel) => void): void => {
+      calls += 1
+      // The death notice has not been processed yet: ssh2's own guard speaks
+      // instead of a channel error, and the pool must still retry.
+      if (calls === 2) throw new Error('Not connected')
+      exec(c, o, cb)
+    }) as SshClientLike['exec']
+    return client
+  }
+  const pool = new SshPool(TARGET, TUNABLES, { read: () => ({}), write: () => {} }, factory)
+
+  const result = await pool.exec('echo after death')
+  assert.equal(result.code, 0)
+  assert.equal(fake.opens(), 2, 'the retry ran on a fresh connection')
+})
+
 test('sftp reuses one channel per pool and reopens only after invalidation', async () => {
   let sftpOpens = 0
   let ended = 0
