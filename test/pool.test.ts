@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { SshPool } from '../src/pool.ts'
-import type { ClientChannel, SshClientLike } from '../src/pool.ts'
+import { samePoolTarget, SshPool } from '../src/pool.ts'
+import type { ClientChannel, PoolTarget, SshClientLike } from '../src/pool.ts'
 
 /** Fake channel emitting one data chunk and an immediate close. */
 function fakeStream(): ClientChannel {
@@ -181,4 +181,25 @@ test('sftp reuses one channel per pool and reopens only after invalidation', asy
   assert.equal(ended, 1, 'invalidation ends the cached channel')
   await pool.sftp()
   assert.equal(sftpOpens, 2, 'a fresh session opens after invalidation')
+})
+
+test('samePoolTarget compares every field that decides authentication', () => {
+  const base: PoolTarget = {
+    host: 'h', port: 22, username: 'u', password: 'p', privateKeyPath: '',
+    passphrase: '', useAgent: false, keyboardInteractive: false, hostKeyMode: 'accept-new',
+  }
+  assert.equal(samePoolTarget(base, { ...base }), true)
+  assert.equal(samePoolTarget(base, { ...base, password: 'other' }), false)
+  assert.equal(samePoolTarget(base, { ...base, privateKeyPath: 'C:/k' }), false)
+  assert.equal(samePoolTarget(base, { ...base, passphrase: 'pp' }), false)
+  assert.equal(samePoolTarget(base, { ...base, username: 'v' }), false)
+  assert.equal(samePoolTarget(base, { ...base, hostKeyMode: 'verify' }), false)
+  assert.equal(samePoolTarget(base, { ...base, keyboardInteractive: true }), false)
+  assert.equal(samePoolTarget(base, { ...base, useAgent: true }), false)
+
+  const proxied: PoolTarget = { ...base, proxy: { host: 'b', port: 22, username: 'pu', password: 'pp', privateKeyPath: '', passphrase: '' } }
+  assert.equal(samePoolTarget(proxied, { ...proxied, proxy: { ...proxied.proxy! } }), true)
+  assert.equal(samePoolTarget(proxied, { ...proxied, proxy: { ...proxied.proxy!, password: 'x' } }), false)
+  assert.equal(samePoolTarget(proxied, base), false, 'dropping the bastion is a change')
+  assert.equal(samePoolTarget(base, { ...base, proxy: { host: '', port: 22, username: '', password: '', privateKeyPath: '', passphrase: '' } }), true)
 })

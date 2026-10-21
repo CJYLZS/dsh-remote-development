@@ -45,6 +45,40 @@ export interface PoolTarget {
   hostKeyMode: string
 }
 
+/**
+ * True when two targets would open the same authenticated connection: a pooled
+ * client is only reusable while the credentials, the jump host, and the host-key
+ * policy it was built with still match the saved machine. A password swapped for
+ * a key (or a rotated key) makes an existing pool unusable — it keeps the old
+ * target forever, so every call would fail authentication until the host
+ * restarted.
+ * @param a - the target a pool was built from.
+ * @param b - the target the registry holds now.
+ * @returns true when the pool may keep its connection.
+ */
+export function samePoolTarget(a: PoolTarget, b: PoolTarget): boolean {
+  const sameProxy = (x: ProxyConfig | undefined, y: ProxyConfig | undefined): boolean => {
+    if (x === undefined || x.host === '') return y === undefined || y.host === ''
+    if (y === undefined || y.host === '') return false
+    return x.host === y.host
+      && x.port === y.port
+      && x.username === y.username
+      && x.password === y.password
+      && x.privateKeyPath === y.privateKeyPath
+      && x.passphrase === y.passphrase
+  }
+  return a.host === b.host
+    && a.port === b.port
+    && a.username === b.username
+    && a.password === b.password
+    && a.privateKeyPath === b.privateKeyPath
+    && a.passphrase === b.passphrase
+    && a.useAgent === b.useAgent
+    && a.keyboardInteractive === b.keyboardInteractive
+    && a.hostKeyMode === b.hostKeyMode
+    && sameProxy(a.proxy, b.proxy)
+}
+
 /** One completed remote command. `signal` is non-null only when the command was killed. */
 export interface RemoteExecResult {
   code: number | null

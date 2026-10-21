@@ -165,3 +165,26 @@ test('upsertMachine keeps a proxy password the edit omits', () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('a saved credential change replaces the pool instead of reusing its old target', () => {
+  const root = tempDir()
+  try {
+    const world = new RemoteWorld(baseConfig(root))
+    const saved = world.upsertMachine({ name: 'box', host: 'h3', port: 22, username: 'u', password: 'old-pass' })
+    const pool = (): unknown => world.poolFor(world.machineById(saved.id)!)
+
+    const withPassword = pool()
+    assert.equal(pool(), withPassword, 'an unchanged machine keeps its pooled connection')
+
+    // Password → key: the pool copied the old target, so it must be replaced.
+    world.upsertMachine({ id: saved.id, host: 'h3', port: 22, username: 'u', password: '', privateKeyPath: 'C:/keys/id_ed25519' })
+    const withKey = pool()
+    assert.notEqual(withKey, withPassword, 'swapping in a key opens a pool built from the key')
+
+    // A cosmetic edit (colour) is not a reason to drop a live connection.
+    world.upsertMachine({ id: saved.id, host: 'h3', port: 22, username: 'u', privateKeyPath: 'C:/keys/id_ed25519', color: '#ff0000' })
+    assert.equal(pool(), withKey, 'renaming or recolouring keeps the connection')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

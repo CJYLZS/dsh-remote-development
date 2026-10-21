@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { HostKeyGuard } from './hostkey.ts'
 import type { KnownHostEntry } from './hostkey.ts'
-import { SshPool, UnsupportedRemoteError } from './pool.ts'
+import { samePoolTarget, SshPool, UnsupportedRemoteError } from './pool.ts'
 import type { PoolTarget, PoolTunables } from './pool.ts'
 import { ANCHOR_META_FILE, createAnchorDir, matchRemotePath, scanAnchors } from './anchors.ts'
 import type { AnchorInfo, AnchorMeta } from './anchors.ts'
@@ -270,13 +270,24 @@ export class RemoteWorld {
   poolFor(ref: MachineRef): SshPool {
     const m = ref.machine
     const key = m.id + '\u0000' + m.host + '\u0000' + m.port + '\u0000' + m.username
+    const target = this.poolTarget(m)
     const existing = this.pools.get(key)
     if (existing) {
-      existing.retune(this.tunables())
-      return existing
+      if (samePoolTarget(existing.targetInfo, target)) {
+        existing.retune(this.tunables())
+        return existing
+      }
+      // The identity is unchanged but what it authenticates with is not: the
+      // operator swapped a password for a key, rotated a key, or edited the
+      // bastion. A pool copies its target at construction, so keeping it would
+      // replay the old credentials on every call and report an authentication
+      // failure that outlives the settings save (the field report: saving a new
+      // key changed nothing until the host was restarted). Drop it.
+      try { existing.close() } catch { /* the old connection is already dead */ }
+      this.pools.delete(key)
     }
     const pool = new SshPool(
-      this.poolTarget(m),
+      target,
       this.tunables(),
       {
         read: () => this.readKnownHosts(),
